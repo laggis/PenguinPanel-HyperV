@@ -1,0 +1,2782 @@
+@using Microsoft.AspNetCore.Components
+@page "/server"
+@implements IDisposable
+@inject PanelService Panel
+@inject UserSession Session
+@inject IJSRuntime JS
+@inject IConfiguration Configuration
+@inject GuacamoleJsonAuthService GuacamoleJsonAuth
+
+<PageTitle>Virtual Server</PageTitle>
+
+@if (!Session.IsLoggedIn)
+{
+    <NotSignedIn />
+}
+else if (string.IsNullOrWhiteSpace(VmName))
+{
+    <section class="panel empty-state">
+        <h1>No server selected</h1>
+        <p>Open a server from the Virtual Servers page.</p>
+        <a class="button primary" href="vms">View virtual servers</a>
+    </section>
+}
+else if (loading)
+{
+    <section class="server-loading-shell" aria-live="polite">
+        <div class="server-loading-card">
+            <div class="server-loading-glow"></div>
+            <div class="server-loading-icon" aria-hidden="true">🐧</div>
+            <span class="eyebrow">PenguinPanel</span>
+            <h1>Preparing your virtual server</h1>
+            <p>We are checking the power state, resources, access details, and network profile for <strong>@VmName</strong>.</p>
+            <div class="server-loading-bar" aria-hidden="true"><span></span></div>
+            <div class="server-loading-steps" aria-hidden="true">
+                <span>Power</span>
+                <span>Resources</span>
+                <span>Network</span>
+            </div>
+            <small>This usually only takes a few seconds.</small>
+        </div>
+    </section>
+}
+else if (vm is null)
+{
+    <section class="panel empty-state">
+        <h1>Server unavailable</h1>
+        <p>The VM could not be found, or it is not assigned to your account.</p>
+        <a class="button primary" href="vms">Back to virtual servers</a>
+    </section>
+}
+else
+{
+    <div class="server-titlebar">
+        <div>
+            <span class="eyebrow">Virtual Server</span>
+            <h1>@vm.Name</h1>
+            <p>Power controls, access details, backups, and reinstall requests for this virtual server.</p>
+        </div>
+        <div class="server-title-actions">
+            <span class="status-chip @StateClass(vm.State)">@PrettyState(vm.State)</span>
+            <button class="button" @onclick="() => Load()">Refresh</button>
+        </div>
+    </div>
+
+    @if (!string.IsNullOrWhiteSpace(message))
+    {
+        <div class="@messageClass">@message</div>
+    }
+
+    <div class="server-tabs" role="tablist" aria-label="Server sections">
+        @if (CanViewTab("console"))
+        {
+            <button class='@TabClass("console")' @onclick='() => OpenTab("console")'>Console</button>
+        }
+        @if (CanViewTab("resources"))
+        {
+            <button class='@TabClass("resources")' @onclick='() => OpenTab("resources")'>Resources</button>
+        }
+        @if (CanViewTab("access"))
+        {
+            <button class='@TabClass("access")' @onclick='() => OpenTab("access")'>Access</button>
+        }
+        @if (CanViewTab("recovery"))
+        {
+            <button class='@TabClass("recovery")' @onclick='() => OpenTab("recovery")'>Password Reset</button>
+        }
+        @if (CanViewTab("network"))
+        {
+            <button class='@TabClass("network")' @onclick='() => OpenTab("network")'>Network</button>
+            <button class='@TabClass("firewall")' @onclick="OpenFirewallTab">Windows Firewall</button>
+        }
+        @if (CanViewTab("backups"))
+        {
+            <button class='@TabClass("backups")' @onclick='() => OpenTab("backups")'>Backups</button>
+        }
+        @if (CanViewTab("reinstall"))
+        {
+            <button class='@TabClass("reinstall")' @onclick='() => OpenTab("reinstall")'>Reinstall</button>
+        }
+        @if (CanViewTab("activity"))
+        {
+            <button class='@TabClass("activity")' @onclick='() => OpenTab("activity")'>Activity</button>
+        }
+        @if (CanViewTab("settings"))
+        {
+            <button class='@TabClass("settings")' @onclick='() => OpenTab("settings")'>Settings</button>
+        }
+    </div>
+
+    <div class="server-grid">
+        <aside class="server-sidebar-card">
+            <div class="server-icon-box">VM</div>
+            <h2>@vm.Name</h2>
+            <p>@(Session.User!.IsAdmin ? "Admin access" : "Assigned server")</p>
+
+            <div class="mini-stats">
+                <div><span>State</span><strong>@PrettyState(vm.State)</strong></div>
+                <div><span>CPU</span><strong>@vm.CpuUsage%</strong></div>
+                <div><span>Memory</span><strong>@FormatBytes(vm.MemoryAssigned)</strong></div>
+                <div><span>Uptime</span><strong>@FormatUptime(vm.Uptime)</strong></div>
+                <div><span>RDP</span><strong>@RdpText()</strong></div>
+                @if (networkProfile.EnableFiveM && networkProfile.FiveMExternalPort is > 0)
+                {
+                    <div><span>FiveM</span><strong>@FiveMText()</strong></div>
+                }
+            </div>
+
+            @if (CanUsePowerActions())
+            {
+                <div class="power-panel">
+                    <button class="power start" @onclick='() => Run("start")' disabled='@(!CanRunPowerAction("start"))' title='@PowerActionTitle("start")'>Start</button>
+                    <button class="power restart" @onclick='() => Run("restart")' disabled='@(!CanRunPowerAction("restart"))' title='@PowerActionTitle("restart")'>Restart</button>
+                    <button class="power stop" @onclick='() => Run("stop")' disabled='@(!CanRunPowerAction("stop"))' title='@PowerActionTitle("stop")'>Stop</button>
+                    <button class="power muted-power" @onclick='() => Run("suspend")' disabled='@(!CanRunPowerAction("suspend"))' title='@PowerActionTitle("suspend")'>Pause</button>
+                    <button class="power muted-power" @onclick='() => Run("resume")' disabled='@(!CanRunPowerAction("resume"))' title='@PowerActionTitle("resume")'>Resume</button>
+                </div>
+
+                @if (powerInProgress)
+                {
+                    <div class="power-progress-card" aria-live="polite">
+                        <div class="power-progress-head">
+                            <span>@PowerProgressTitle()</span>
+                            <strong>@powerProgress%</strong>
+                        </div>
+                        <div class="power-progress-track" role="progressbar" aria-valuemin="0" aria-valuemax="100" aria-valuenow="@powerProgress">
+                            <span style="@PowerProgressStyle"></span>
+                        </div>
+                        <p>@powerStatus</p>
+                    </div>
+                }
+            }
+            else
+            {
+                <div class="notice-card compact-notice">Power controls are disabled for your account.</div>
+            }
+        </aside>
+
+        <main class="server-main-card">
+            @if (tabLoading)
+            {
+                <div class="notice-card compact-notice"><strong>Loading @(TabDisplayName(activeTab))...</strong></div>
+            }
+
+            @if (!CanViewTab(activeTab))
+            {
+                <section class="empty-state">
+                    <h2>Section hidden</h2>
+                    <p>This tab is not enabled for your account. Ask an administrator to update your User Manager permissions.</p>
+                </section>
+            }
+            else if (activeTab == "console")
+            {
+                <section>
+                    <div class="panel-head">
+                        <h2>Remote Desktop</h2>
+                        <span class="muted">RDP console access for this virtual server</span>
+                    </div>
+
+                    @if (!HasRdpTarget())
+                    {
+                        <div class="notice-card">
+                            <strong>RDP is not configured yet</strong>
+                            <p>Add the VM IP/hostname and RDP port in the Access tab. No extra software is needed inside the VM, but Windows Remote Desktop must be enabled in the guest OS.</p>
+                        </div>
+                    }
+                    else
+                    {
+                        <div class="rdp-console-layout">
+                            <div class="rdp-console-card">
+                                <div class="rdp-screen-header">
+                                    <span class="dot-live"></span>
+                                    <strong>@vm.Name</strong>
+                                    <span>@RdpText()</span>
+                                </div>
+
+                                @if (!IsConsoleAvailableState(vm.State))
+                                {
+                                    <div class="rdp-placeholder-screen rdp-offline-screen">
+                                        <div class="rdp-monitor-icon offline-monitor">⏻</div>
+                                        <h3>Console unavailable while the server is @PrettyState(vm.State)</h3>
+                                        <p>The browser console will open after the virtual server is running. PenguinPanel blocks Guacamole from loading while the VM is offline, so clients do not get stuck in a reconnect loop.</p>
+                                        <div class="button-row big-actions centered-actions">
+                                            @if (CanUsePowerActions())
+                                            {
+                                                <button class="button primary" @onclick='() => Run("start")' disabled='@(!CanRunPowerAction("start"))'>Start server</button>
+                                            }
+                                            <button class="button" @onclick="() => Load()">Refresh state</button>
+                                        </div>
+                                    </div>
+                                }
+                                else if (HasEffectiveWebConsoleUrl())
+                                {
+                                    <div class="web-rdp-frame-shell">
+                                        <iframe class="rdp-frame" src="@EffectiveWebConsoleUrl()" title="@ConsoleProvider() remote desktop for @vm.Name" allow="clipboard-read; clipboard-write; fullscreen" allowfullscreen></iframe>
+                                        <div class="web-rdp-frame-actions">
+                                            <span>@ConsoleModeText()</span>
+                                            <a class="button mini" href="@EffectiveWebConsoleUrl()" target="_blank" rel="noopener noreferrer">Open in new tab</a>
+                                        </div>
+                                    </div>
+                                }
+                                else
+                                {
+                                    <div class="rdp-placeholder-screen">
+                                        <div class="rdp-monitor-icon">▣</div>
+                                        <h3>Remote Desktop launcher</h3>
+                                        <p>Download the generated <strong>.rdp</strong> file or copy the connection details below. To embed the desktop here, enable Guacamole in <strong>appsettings.json</strong> or add a Guacamole connection URL/ID in the Access tab.</p>
+                                        <div class="button-row big-actions centered-actions">
+                                            <a class="button primary" href="@RdpDataUri()" download="@RdpFileName()">Download .RDP</a>
+                                            <button class="button" @onclick='() => CopyToClipboard(RdpText(), "RDP address")'>Copy address</button>
+                                        </div>
+                                    </div>
+                                }
+                            </div>
+
+                            <aside class="rdp-details-card">
+                                <h3>Connection details</h3>
+                                <div class="server-info-grid single-column-info">
+                                    <div><span>Address</span><strong>@RdpText()</strong></div>
+                                    <div><span>Username</span><strong>@ValueOrNotSet(access.Username)</strong></div>
+                                    <div><span>Password</span><strong>@PasswordText()</strong></div>
+                                </div>
+                                <div class="button-row settings-actions">
+                                    <button class="button" @onclick='() => CopyToClipboard(RdpText(), "RDP address")'>Copy address</button>
+                                    <button class="button" @onclick='() => CopyToClipboard(access.Username, "Username")' disabled="@(string.IsNullOrWhiteSpace(access.Username))">Copy username</button>
+                                    <button class="button" @onclick="() => showPassword = !showPassword">@(showPassword ? "Hide password" : "Show password")</button>
+                                    <button class="button" @onclick='() => CopyToClipboard(access.Password, "Password")' disabled="@(string.IsNullOrWhiteSpace(access.Password))">Copy password</button>
+                                </div>
+                            </aside>
+                        </div>
+
+                        <div class="terminal-window remote-status-terminal">
+                            <div><span class="term-time">[@DateTime.Now.ToString("HH:mm:ss")]</span> <span class="term-ok">[PenguinPanel]</span> Selected virtual server: @vm.Name</div>
+                            <div><span class="term-time">[@DateTime.Now.ToString("HH:mm:ss")]</span> <span class="term-ok">[State]</span> @PrettyState(vm.State)</div>
+                            <div><span class="term-time">[@DateTime.Now.ToString("HH:mm:ss")]</span> <span class="term-ok">[RDP]</span> @RdpText()</div>
+                            <div><span class="term-time">[@DateTime.Now.ToString("HH:mm:ss")]</span> <span class="term-ok">[Mode]</span> @ConsoleModeText()</div>
+                            @if (!string.IsNullOrWhiteSpace(lastAction))
+                            {
+                                <div><span class="term-time">[@DateTime.Now.ToString("HH:mm:ss")]</span> <span class="term-ok">[Action]</span> @lastAction</div>
+                            }
+                        </div>
+
+                    }
+                </section>
+            }
+            else if (activeTab == "resources")
+            {
+                <section>
+                    <div class="panel-head">
+                        <h2>Resource usage</h2>
+                        <span class="muted">Live virtual server snapshot</span>
+                    </div>
+                    <div class="resource-grid">
+                        <div class="resource-card">
+                            <div class="resource-top"><span>CPU Usage</span><strong>@vm.CpuUsage%</strong></div>
+                            <div class="usage-track"><div class="usage-fill" style="width:@(Clamp(vm.CpuUsage))%"></div></div>
+                            <div class="fake-chart cpu-chart"><span style="height:@(Math.Max(8, Clamp(vm.CpuUsage)))%"></span></div>
+                        </div>
+                        <div class="resource-card">
+                            <div class="resource-top"><span>Memory Assigned</span><strong>@FormatBytes(vm.MemoryAssigned)</strong></div>
+                            <div class="usage-track"><div class="usage-fill" style="width:@(MemoryBarPercent(vm.MemoryAssigned))%"></div></div>
+                            <div class="fake-chart memory-chart"><span style="height:@(MemoryBarPercent(vm.MemoryAssigned))%"></span></div>
+                        </div>
+                    </div>
+                    <div class="server-info-grid">
+                        <div><span>Status</span><strong>@(string.IsNullOrWhiteSpace(vm.Status) ? "No extra status" : vm.Status)</strong></div>
+                        <div><span>Uptime</span><strong>@FormatUptime(vm.Uptime)</strong></div>
+                        <div><span>Assigned memory</span><strong>@FormatBytes(vm.MemoryAssigned)</strong></div>
+                        <div><span>Last refresh</span><strong>@lastLoaded.ToLocalTime()</strong></div>
+                    </div>
+                </section>
+            }
+            else if (activeTab == "access")
+            {
+                <section>
+                    <div class="panel-head">
+                        <h2>Server access</h2>
+                        <span class="muted">RDP / SSH details for the assigned user</span>
+                    </div>
+                    <div class="server-info-grid">
+                        <div><span>Hostname</span><strong>@ValueOrNotSet(access.Hostname)</strong></div>
+                        <div><span>IP address</span><strong>@ValueOrNotSet(access.IpAddress)</strong></div>
+                        <div><span>RDP</span><strong>@RdpText()</strong></div>
+                        @if (networkProfile.EnableFiveM && networkProfile.FiveMExternalPort is > 0)
+                        {
+                            <div><span>FiveM</span><strong>@FiveMText()</strong></div>
+                        }
+                        <div><span>SSH</span><strong>@SshText()</strong></div>
+                        <div><span>Username</span><strong>@ValueOrNotSet(access.Username)</strong></div>
+                        <div><span>Password</span><strong>@PasswordText()</strong></div>
+                        <div><span>Browser console</span><strong>@BrowserConsoleStatus()</strong></div>
+                    </div>
+                    <div class="button-row settings-actions">
+                        <button class="button" @onclick="() => showPassword = !showPassword">@(showPassword ? "Hide password" : "Show password")</button>
+                    </div>
+
+                    @if (Session.User!.IsAdmin)
+                    {
+                        <div class="notice-card compact-notice">
+                            <strong>RDP routing</strong>
+                            <p><strong>Public:</strong> @RdpText()</p>
+                            <p><strong>WinNAT target:</strong> @RdpNatTargetText()</p>
+                            <p><strong>Windows listener:</strong> @RdpListenerText()</p>
+                            <div class="button-row settings-actions">
+                                <button class="button" @onclick="VerifyRdpListener" disabled="@(busy || rdpListenerChecking || rdpListenerChanging || string.IsNullOrWhiteSpace(access.Username) || string.IsNullOrWhiteSpace(access.Password))">@(rdpListenerChecking ? "Checking..." : "Verify Windows RDP listener")</button>
+                                <button class="button primary soft" @onclick="SyncRdpPortToPublic" disabled="@(busy || rdpListenerChecking || rdpListenerChanging || string.IsNullOrWhiteSpace(access.Username) || string.IsNullOrWhiteSpace(access.Password))">@(rdpListenerChanging ? "Changing RDP port..." : "Match Windows RDP to public port")</button>
+                            </div>
+                            <p class="muted">New VPSes can use the same public and Windows RDP port. Older VPSes may still listen on TCP 3389. <strong>Match Windows RDP to public port</strong> updates Windows, the guest firewall, and WinNAT together. Any active RDP session can disconnect for a few seconds while Remote Desktop Services restarts.</p>
+                        </div>
+                    }
+
+                    <hr class="soft-line" />
+                    <div class="panel-head sub-head">
+                        <h2>Change Remote Desktop password</h2>
+                        <span class="muted">Updates Windows and the saved panel password</span>
+                    </div>
+                    <div class="form-grid">
+                        <label>New password<input type="password" @bind="remoteDesktopPassword" autocomplete="new-password" disabled="@busy" /></label>
+                        <label>Confirm password<input type="password" @bind="remoteDesktopConfirmPassword" autocomplete="new-password" disabled="@busy" /></label>
+                        <div class="form-actions full-row">
+                            <button class="button" @onclick="GenerateRemoteDesktopPassword" disabled="@busy">Generate password</button>
+                            <button class="button primary" @onclick="ChangeRemoteDesktopPassword" disabled="@(busy || string.IsNullOrWhiteSpace(remoteDesktopPassword))">Change RDP password</button>
+                        </div>
+                    </div>
+
+                    @if (!string.IsNullOrWhiteSpace(access.Notes))
+                    {
+                        <div class="notice-card access-notes">
+                            <strong>Notes</strong>
+                            <p>@access.Notes</p>
+                        </div>
+                    }
+
+                    @if (Session.User!.IsAdmin)
+                    {
+                        <hr class="soft-line" />
+                        <div class="panel-head">
+                            <h2>Edit access details</h2>
+                            <span class="muted">Visible to assigned users</span>
+                        </div>
+                                                <div class="form-grid">
+                            <label>Hostname<input @bind="accessHost" /></label>
+                            <label>IP address<input @bind="accessIp" /></label>
+                            <label>Public RDP port<input type="number" @bind="accessRdpPort" /></label>
+                            <label>SSH port<input type="number" @bind="accessSshPort" /></label>
+                            <label>Username<input @bind="accessUsername" /></label>
+                            <label>Password<input type="text" @bind="accessPassword" /></label>
+                            <label class="full-row">Guacamole console URL / connection ID<input @bind="accessWebConsoleUrl" placeholder="Paste the full Guacamole connection URL, or only the connection ID after /#/client/." /></label>
+                            <div class="notice-card full-row compact-notice">
+                                <strong>Guacamole preview</strong>
+                                <p>@ConsolePreviewText()</p>
+                                @if (HasEffectiveWebConsoleUrl())
+                                {
+                                    <a class="button mini" href="@EffectiveWebConsoleUrl()" target="_blank" rel="noopener noreferrer">Open current console</a>
+                                }
+                            </div>
+                            <label class="full-row">Notes<textarea @bind="accessNotes"></textarea></label>
+                            <div class="form-actions full-row">
+                                <button class="button primary" @onclick="SaveAccess" disabled="@busy">Save access details</button>
+                                <button class="button" @onclick="GenerateVmPassword" disabled="@busy">Generate password</button>
+                                <button class="button danger" @onclick="ResetStoredPassword" disabled="@(busy || string.IsNullOrWhiteSpace(accessPassword))">Save as new stored password</button>
+                            </div>
+                        </div>
+                    }
+                </section>
+            }
+            else if (activeTab == "recovery")
+            {
+                <section>
+                    <div class="panel-head">
+                        <h2>Emergency Guest Agent reset</h2>
+                        <span class="muted">Password recovery and Guest Agent status</span>
+                    </div>
+                    <div class="notice-card compact-notice">
+                        <strong>Use this when RDP access is lost or compromised</strong>
+                        <p>This tab changes the Windows password from inside the VM through PenguinGuestAgent. It is separated from normal access details so clients can find recovery faster and avoid changing Guest Agent setup by mistake.</p>
+                    </div>
+                    @if (CanManageGuestAgent())
+                    {
+                        <div class="server-info-grid">
+                            <div><span>Agent</span><strong>@GuestAgentStatusText()</strong></div>
+                            <div><span>Last seen</span><strong>@GuestAgentLastSeenText()</strong></div>
+                            <div><span>Version</span><strong>@ValueOrNotSet(guestAgentSettings.LastAgentVersion)</strong></div>
+                            <div><span>Last IP</span><strong>@ValueOrNotSet(guestAgentSettings.LastIpAddress)</strong></div>
+                        </div>
+
+                        <div class="notice-card compact-notice">
+                            <strong>Agent setup</strong>
+                            <p>Generate a unique token for this VM, then install <code>PenguinGuestAgent</code> inside the Windows VM or inside your VM template.</p>
+                            @if (!string.IsNullOrWhiteSpace(generatedGuestAgentToken))
+                            {
+                                <p><strong>Copy this token now. It is only shown once:</strong></p>
+                                <code>@generatedGuestAgentToken</code>
+                                <div class="button-row settings-actions">
+                                    <button class="button mini" @onclick='() => CopyToClipboard(generatedGuestAgentToken, "Guest Agent token")'>Copy token</button>
+                                </div>
+                            }
+                            <div class="button-row settings-actions">
+                                <button class="button primary" @onclick="GenerateGuestAgentToken" disabled="@busy">Generate / rotate agent token</button>
+                                <button class="button" @onclick='() => SetGuestAgentEnabled(true)' disabled="@(busy || !guestAgentSettings.HasToken)">Enable agent</button>
+                                <button class="button danger" @onclick='() => SetGuestAgentEnabled(false)' disabled="@busy">Disable agent</button>
+                            </div>
+                        </div>
+                    }
+                    else
+                    {
+                        <div class="server-info-grid">
+                            <div><span>Password recovery</span><strong>@ClientGuestAgentStatusText()</strong></div>
+                            <div><span>Last check-in</span><strong>@GuestAgentLastSeenText()</strong></div>
+                        </div>
+                    }
+
+                    @if (!CanUseEmergencyGuestReset())
+                    {
+                        <div class="notice-card compact-notice">
+                            <strong>Emergency reset locked</strong>
+                            <p>Emergency password reset is only available to the account owner and administrators. Sub-users can still view access details if that permission is enabled.</p>
+                        </div>
+                    }
+                    else if (!guestAgentSettings.IsEnabled || !guestAgentSettings.HasToken)
+                    {
+                        <div class="notice-card compact-notice">
+                            <strong>Password recovery is not ready</strong>
+                            <p>An administrator needs to install and enable the Guest Agent for this VM before emergency password reset can be used.</p>
+                        </div>
+                    }
+                    else
+                    {
+                        <div class="form-grid">
+                            <label>Windows username<input @bind="emergencyUsername" disabled="@(busy || !CanManageGuestAgent())" /></label>
+                            @if (!CanManageGuestAgent())
+                            {
+                                <div class="notice-card compact-notice full-row">
+                                    <strong>Safe client mode</strong>
+                                    <p>The reset uses the saved RDP username for this server. Agent setup, token rotation, and dangerous recovery options are hidden to prevent accidental lockouts.</p>
+                                </div>
+                            }
+                            <label>New password<input type="@EmergencyPasswordInputType" @bind="emergencyPassword" autocomplete="new-password" disabled="@busy" /></label>
+                            <label>Confirm password<input type="@EmergencyPasswordInputType" @bind="emergencyConfirmPassword" autocomplete="new-password" disabled="@busy" /></label>
+                            <label>Reset verification code<input @bind="emergencyVerificationCode" inputmode="numeric" autocomplete="one-time-code" placeholder="6-digit email code" disabled="@busy" /></label>
+                            <div class="notice-card compact-notice full-row">
+                                <strong>Extra security step</strong>
+                                <p>Before queueing an emergency reset, send a one-time code to your panel account email and enter it here. This helps stop someone with an open browser session from changing a VM password without email access.</p>
+                                <div class="button-row settings-actions">
+                                    <button class="button mini" @onclick="SendEmergencyResetCode" disabled="@(busy || !guestAgentSettings.IsEnabled || !guestAgentSettings.HasToken)">Email reset code</button>
+                                </div>
+                            </div>
+                            @if (!string.IsNullOrWhiteSpace(emergencyPassword))
+                            {
+                                <div class="notice-card compact-notice full-row">
+                                    <strong>Emergency password ready</strong>
+                                    <p>Copy this password before queueing the reset. It is cleared from the page after the reset is queued or when the page reloads.</p>
+                                    <div class="server-info-grid compact-secret-grid">
+                                        <div><span>Username</span><strong>@ValueOrNotSet(emergencyUsername)</strong></div>
+                                        <div><span>Password</span><strong>@EmergencyPasswordText()</strong></div>
+                                    </div>
+                                    <div class="button-row settings-actions">
+                                        <button class="button mini" @onclick="ToggleEmergencyPasswordVisibility" disabled="@busy">@(showEmergencyPassword ? "Hide password" : "Show password")</button>
+                                        <button class="button mini" @onclick='() => CopyToClipboard(emergencyPassword, "Emergency password")' disabled="@busy">Copy password</button>
+                                    </div>
+                                </div>
+                            }
+                            @if (CanManageGuestAgent())
+                            {
+                                <label class="check-row"><input type="checkbox" @bind="emergencyForceLogoffSessions" disabled="@busy" /> Sign out active RDP sessions</label>
+                                <label class="check-row"><input type="checkbox" @bind="emergencyRestartRemoteDesktopService" disabled="@busy" /> Restart Remote Desktop service</label>
+                                <label class="check-row"><input type="checkbox" @bind="emergencyDisableRemoteDesktopFirewall" disabled="@busy" /> Disable Windows Remote Desktop firewall rule after reset</label>
+                                <label class="check-row"><input type="checkbox" @bind="emergencyDisableOtherLocalAdministrators" disabled="@busy" /> Disable other local Administrator-group users</label>
+                            }
+                            <label class="check-row"><input type="checkbox" @bind="emergencySendPasswordEmail" disabled="@busy" /> Email the new password to my panel account email</label>
+                            <div class="form-actions full-row">
+                                <button class="button" @onclick="GenerateEmergencyPassword" disabled="@busy">Generate emergency password</button>
+                                <button class="button danger" @onclick="QueueEmergencyPasswordReset" disabled="@(busy || string.IsNullOrWhiteSpace(emergencyPassword) || (EmergencyResetCodeRequired && string.IsNullOrWhiteSpace(emergencyVerificationCode)) || !guestAgentSettings.IsEnabled || !guestAgentSettings.HasToken)">Queue emergency reset</button>
+                            </div>
+                        </div>
+                    }
+
+                    @if (CanManageGuestAgent() && guestAgentCommands.Count > 0)
+                    {
+                        <div class="table-wrap compact-table-wrap">
+                            <table class="data-table compact-table">
+                                <thead><tr><th>ID</th><th>Command</th><th>Status</th><th>Created</th><th>Completed</th><th>Result</th></tr></thead>
+                                <tbody>
+                                    @foreach (var command in guestAgentCommands)
+                                    {
+                                        <tr>
+                                            <td>@command.Id</td>
+                                            <td>@command.CommandType</td>
+                                            <td>@command.Status</td>
+                                            <td>@command.CreatedAt.ToLocalTime()</td>
+                                            <td>@(command.CompletedAt?.ToLocalTime().ToString() ?? "-")</td>
+                                            <td>@ValueOrNotSet(command.ResultMessage)</td>
+                                        </tr>
+                                    }
+                                </tbody>
+                            </table>
+                        </div>
+                    }
+
+                </section>
+            }
+            else if (activeTab == "network")
+            {
+                <section>
+                    <div class="panel-head">
+                        <h2>Network</h2>
+                        <span class="muted">Connection and protection actions</span>
+                    </div>
+                    <div class="notice-card">
+                        <strong>Connection info</strong>
+                        <p>RDP target: <strong>@RdpText()</strong>. Admins can scan outbound traffic using host resource metering and disconnect the VM network adapter if needed.</p>
+                    </div>
+                    @if (Session.User!.IsAdmin)
+                    {
+                        <div class="button-row big-actions">
+                            <button class="button primary" @onclick="ScanNetwork" disabled="@busy">Scan outbound traffic</button>
+                            <button class="button danger" @onclick='() => Run("disconnect")' disabled="@busy">Disconnect network</button>
+                        </div>
+                        <hr class="soft-line" />
+                        <div class="panel-head sub-head">
+                            <h2>Network / port profile</h2>
+                            <span class="muted">Re-applied after template reinstall</span>
+                        </div>
+                        <div class="notice-card compact-notice">
+                            <strong>Why this matters</strong>
+                            <p>PenguinPanel keeps the same VM specs during reinstall. This profile makes sure the same internal IPv4, RDP port, FiveM TCP/UDP ports and extra NAT/firewall rules are saved and can be re-applied after the disk is replaced. Use the WinNAT object name from <code>Get-NetNat</code>, not the vEthernet adapter name.</p>
+                        </div>
+                        <div class="form-grid">
+                            <label>NAT name<input @bind="profileNatName" placeholder="WinNAT name, e.g. HPanel-NAT — not vEthernet (HPanel-NAT)" /></label>
+                            <label>Internal VM IPv4<input @bind="profileInternalIp" placeholder="192.168.119.100" /></label>
+                            <label>Public IPv4<input @bind="profilePublicIp" placeholder="81.16.177.72" /></label>
+                            <label>Public hostname<input @bind="profilePublicHostname" placeholder="example.penguinhosting.host" /></label>
+                            <div class="notice-card full-row compact-notice">
+                                <strong>Guest DNS / internet repair</strong>
+                                <p>Guest DNS normally uses PenguinGuestAgent. If the VM has no internet and the agent cannot check in, use <strong>Repair guest internet</strong>. It uses Hyper-V PowerShell Direct from the host with the saved Access-tab Windows credentials, so it can fix IP/gateway/DNS even before the VM can reach the panel.</p>
+                            </div>
+                            <label>DNS interface alias<input @bind="profileDnsInterfaceAlias" placeholder="Auto, or e.g. Ethernet 2" /></label>
+                            <div class="form-grid two-col-inline">
+                                <label>Preferred DNS server<input @bind="profilePreferredDns" placeholder="81.16.177.72" /></label>
+                                <label>Alternate DNS server<input @bind="profileAlternateDns" placeholder="1.1.1.1" /></label>
+                            </div>
+                            <label class="switch-row"><input type="checkbox" @bind="profileEnableRdp" /> Keep RDP NAT rule</label>
+                            <div class="form-grid two-col-inline">
+                                <label>RDP external port<input type="number" @bind="profileRdpExternalPort" /></label>
+                                <label>Windows RDP / internal port<input type="number" @bind="profileRdpInternalPort" /></label>
+                            </div>
+                            <label class="switch-row"><input type="checkbox" @bind="profileEnableFiveM" /> Keep FiveM TCP/UDP rules</label>
+                            <div class="form-grid two-col-inline">
+                                <label>FiveM external port<input type="number" @bind="profileFiveMExternalPort" /></label>
+                                <label>FiveM internal port<input type="number" @bind="profileFiveMInternalPort" /></label>
+                            </div>
+                            <label class="full-row">Extra TCP ports<textarea @bind="profileExtraTcpPorts" placeholder="One per line or comma-separated. Use external:internal, example: 40120:30120"></textarea></label>
+                            <label class="full-row">Extra UDP ports<textarea @bind="profileExtraUdpPorts" placeholder="One per line or comma-separated. Example: 40120:30120"></textarea></label>
+                            <div class="notice-card full-row compact-notice">
+                                <strong>Current profile preview</strong>
+                                <p>@NetworkProfilePreview()</p>
+                            </div>
+                            @if (portConflicts.Count > 0)
+                            {
+                                <div class="notice-card full-row compact-notice danger-note">
+                                    <strong>Port conflict detected</strong>
+                                    <ul>
+                                        @foreach (var conflict in portConflicts)
+                                        {
+                                            <li>@conflict.Protocol/@conflict.ExternalPort is already used by @conflict.ConflictVmName</li>
+                                        }
+                                    </ul>
+                                </div>
+                            }
+                            else if (portCheckCompleted)
+                            {
+                                <div class="notice-card full-row compact-notice success-note">No port conflicts found for this profile.</div>
+                            }
+                            <div class="form-actions full-row button-row">
+                                <button class="button" @onclick="CopyNetworkProfileFromAccess" disabled="@busy">Copy from Access tab</button>
+                                <button class="button" @onclick="CheckPortConflicts" disabled="@busy">Check conflicts</button>
+                                <button class="button primary" @onclick="SaveNetworkProfile" disabled="@busy">Save network profile</button>
+                                <button class="button" @onclick="ApplyGuestDnsSettings" disabled="@busy">Apply guest DNS now</button>
+                                <button class="button" @onclick="RepairGuestInternet" disabled="@busy">Repair guest internet</button>
+                                <button class="button primary soft" @onclick="ApplyNetworkProfile" disabled="@busy">Apply NAT/firewall + DNS now</button>
+                            </div>
+                        </div>
+                    }
+                    else
+                    {
+                        <p class="muted">Network abuse tools are admin-only.</p>
+                    }
+                </section>
+            }
+            else if (activeTab == "firewall")
+            {
+                <section>
+                    <div class="panel-head">
+                        <h2>Windows Firewall</h2>
+                        <span class="muted">Firewall rules inside this Windows VPS</span>
+                    </div>
+
+                    <div class="notice-card">
+                        <strong>Guest firewall, not the Hyper-V host firewall</strong>
+                        <p>These rules are created inside Windows using Hyper-V PowerShell Direct. The Network tab still controls the host WinNAT and host firewall mappings. <strong>Sync from network profile</strong> opens the VM-side RDP, FiveM, and extra internal ports saved in PenguinPanel.</p>
+                    </div>
+
+                    <div class="button-row big-actions">
+                        <button class="button primary" @onclick="SyncGuestFirewall" disabled="@busy">Sync from network profile</button>
+                        <button class="button" @onclick="LoadGuestFirewallRules" disabled="@busy">Refresh rules</button>
+                    </div>
+
+                    <hr class="soft-line" />
+                    <div class="panel-head sub-head">
+                        <h2>Add inbound rule</h2>
+                        <span class="muted">PenguinPanel-managed rules only</span>
+                    </div>
+                    <div class="form-grid">
+                        <label>Rule name<input @bind="firewallRuleName" placeholder="FiveM HTTP, game query, web panel..." /></label>
+                        <label>Protocol
+                            <select @bind="firewallProtocol">
+                                <option value="TCP">TCP</option>
+                                <option value="UDP">UDP</option>
+                            </select>
+                        </label>
+                        <label>Local port<input type="number" min="1" max="65535" @bind="firewallLocalPort" /></label>
+                        <label>Remote address<input @bind="firewallRemoteAddress" placeholder="Any, 203.0.113.20, or 203.0.113.0/24" /></label>
+                        @if (Session.User!.IsAdmin)
+                        {
+                            <label>Action
+                                <select @bind="firewallAction">
+                                    <option value="Allow">Allow</option>
+                                    <option value="Block">Block</option>
+                                </select>
+                            </label>
+                        }
+                        else
+                        {
+                            <label>Action<input value="Allow" disabled /></label>
+                        }
+                        <div class="form-actions full-row">
+                            <button class="button primary" @onclick="AddGuestFirewallRule" disabled="@busy">Add Windows Firewall rule</button>
+                        </div>
+                    </div>
+
+                    <hr class="soft-line" />
+                    <div class="panel-head sub-head">
+                        <h2>PenguinPanel firewall rules</h2>
+                        <span class="muted">Automatic rules are rebuilt from the Network profile</span>
+                    </div>
+                    @if (!firewallRulesLoaded)
+                    {
+                        <p class="muted">Open this tab or press Refresh rules to read the Windows Firewall rules from the running VM.</p>
+                    }
+                    else if (guestFirewallRules.Count == 0)
+                    {
+                        <div class="empty-state compact-empty">
+                            <div class="empty-icon">▦</div>
+                            <div>
+                                <strong>No PenguinPanel Windows Firewall rules yet</strong>
+                                <p class="muted">Use Sync from network profile to add RDP/FiveM rules, or create a custom inbound rule above.</p>
+                            </div>
+                        </div>
+                    }
+                    else
+                    {
+                        <table class="data-table compact-table">
+                            <thead><tr><th>Name</th><th>Protocol</th><th>Port</th><th>Remote</th><th>Action</th><th>Source</th><th>Actions</th></tr></thead>
+                            <tbody>
+                                @foreach (var rule in guestFirewallRules)
+                                {
+                                    <tr>
+                                        <td><strong>@rule.DisplayName</strong></td>
+                                        <td>@rule.Protocol</td>
+                                        <td>@rule.LocalPort</td>
+                                        <td>@rule.RemoteAddress</td>
+                                        <td><span class="pill">@(rule.Enabled ? rule.Action : "Disabled")</span></td>
+                                        <td>@(rule.IsAutomatic ? "Network profile" : "Custom")</td>
+                                        <td>
+                                            @if (rule.IsAutomatic)
+                                            {
+                                                <span class="muted">Change Network profile</span>
+                                            }
+                                            else
+                                            {
+                                                <button class="button mini danger" @onclick="() => RemoveGuestFirewallRule(rule)" disabled="@busy">Delete</button>
+                                            }
+                                        </td>
+                                    </tr>
+                                }
+                            </tbody>
+                        </table>
+                    }
+                </section>
+            }
+            else if (activeTab == "backups")
+            {
+                <section>
+                    <div class="panel-head">
+                        <h2>Backups / checkpoints</h2>
+                        <span class="muted">Restore points for this VM</span>
+                    </div>
+                    <div class="notice-card restore-safety-note">
+                        <strong>Safe restore mode</strong>
+                        <p>Restoring a checkpoint will temporarily stop this VM first. After the restore is finished, the VM stays stopped so you can start it again when you are ready.</p>
+                    </div>
+                    @if (restoreInProgress || !string.IsNullOrWhiteSpace(restoreStatus))
+                    {
+                        <div class="restore-progress-card">
+                            <div class="restore-progress-head">
+                                <strong>@(restoreInProgress ? "Restoring checkpoint" : "Last restore status")</strong>
+                                <span>@restoreProgress%</span>
+                            </div>
+                            <div class="restore-progress-track" role="progressbar" aria-valuemin="0" aria-valuemax="100" aria-valuenow="@restoreProgress">
+                                <div class="restore-progress-bar" style="@RestoreProgressStyle"></div>
+                            </div>
+                            <p>@restoreStatus</p>
+                        </div>
+                    }
+                    <div class="inline-form checkpoint-create">
+                        <input @bind="checkpointName" placeholder="Backup name, optional" />
+                        <button class="button primary" @onclick="CreateCheckpoint" disabled="@(busy || restoreInProgress)">Create checkpoint</button>
+                        <button class="button" @onclick="LoadCheckpoints" disabled="@(busy || restoreInProgress)">Refresh</button>
+                    </div>
+                    @if (!string.IsNullOrWhiteSpace(checkpointError))
+                    {
+                        <div class="alert">Could not load restore points: @checkpointError</div>
+                    }
+                    @if (checkpoints.Count == 0)
+                    {
+                        <div class="empty-state compact-empty">
+                            <div class="empty-icon">↺</div>
+                            <div>
+                                <strong>No restore points visible yet</strong>
+                                <p class="muted">Create a checkpoint, then use Refresh if it does not appear after a few seconds. Restore and delete buttons will show next to each checkpoint.</p>
+                            </div>
+                        </div>
+                    }
+                    else
+                    {
+                        <table class="data-table compact-table">
+                            <thead><tr><th>Name</th><th>Type</th><th>Created</th><th>Actions</th></tr></thead>
+                            <tbody>
+                                @foreach (var checkpoint in checkpoints)
+                                {
+                                    <tr>
+                                        <td><strong>@checkpoint.Name</strong></td>
+                                        <td>@checkpoint.SnapshotType</td>
+                                        <td>@checkpoint.CreationTime.ToLocalTime()</td>
+                                        <td class="button-row">
+                                            <button class="button primary soft" @onclick="() => RestoreCheckpoint(checkpoint.Name)" disabled="@(busy || restoreInProgress)">Restore safely</button>
+                                            <button class="button danger" @onclick="() => DeleteCheckpoint(checkpoint.Name)" disabled="@(busy || restoreInProgress)">Delete</button>
+                                        </td>
+                                    </tr>
+                                }
+                            </tbody>
+                        </table>
+                    }
+                </section>
+            }
+            else if (activeTab == "reinstall")
+            {
+                <section>
+                    <div class="panel-head">
+                        <h2>Reinstall</h2>
+                        <span class="muted">@(Session.User!.IsAdmin ? "Admin reinstall" : "Self-service OS reinstall")</span>
+                    </div>
+
+                    @if (templates.Where(t => t.IsEnabled || Session.User!.IsAdmin).Any())
+                    {
+                        <div class="notice-card">
+                            <strong>@(Session.User!.IsAdmin ? "Template reinstall" : "Self-service reinstall")</strong>
+                            <p>@(Session.User!.IsAdmin
+                                ? "Pick one of the global OS templates from OS Templates. PenguinPanel will stop this VM, replace its OS disk with a fresh copy of the selected VHDX, preserve the old disk, start it again, and re-apply the saved Network / port profile."
+                                : "Choose an operating system and PenguinPanel will reinstall this server automatically. The server will go offline temporarily while the OS disk is replaced, then it will start again when the reinstall is finished.")</p>
+                        </div>
+
+                        @if (reinstallInProgress || !string.IsNullOrWhiteSpace(reinstallStatus))
+                        {
+                            <div class="restore-progress-card reinstall-progress-card" aria-live="polite">
+                                <div class="restore-progress-head">
+                                    <strong>@(reinstallInProgress ? "Reinstalling server" : "Last reinstall status")</strong>
+                                    <span>@reinstallProgress%</span>
+                                </div>
+                                <div class="restore-progress-track" role="progressbar" aria-valuemin="0" aria-valuemax="100" aria-valuenow="@reinstallProgress">
+                                    <div class="restore-progress-bar" style="@ReinstallProgressStyle"></div>
+                                </div>
+                                <p>@reinstallStatus</p>
+                            </div>
+                        }
+
+                        <div class="form-grid">
+                            <label>
+                                Operating system / template
+                                <select @bind="selectedTemplateId">
+                                    <option value="0">Select template</option>
+                                    @foreach (var template in templates.Where(t => t.IsEnabled || Session.User!.IsAdmin))
+                                    {
+                                        <option value="@template.Id">@template.Name (@template.OperatingSystem)</option>
+                                    }
+                                </select>
+                            </label>
+                            @if (SelectedReinstallTemplate is { } selectedTemplate && !string.IsNullOrWhiteSpace(selectedTemplate.Notes))
+                            {
+                                <div class="notice-card full-row template-client-note">
+                                    <strong>After reinstall</strong>
+                                    <p>@selectedTemplate.Notes</p>
+                                </div>
+                            }
+                            @if (Session.User!.IsAdmin)
+                            {
+                                <label class="full-row">Admin note<textarea @bind="reinstallNotes" placeholder="Optional internal note for the audit log"></textarea></label>
+                            }
+                            <div class="form-actions full-row">
+                                <button class="button primary" @onclick="RunDirectReinstallNow" disabled="@(busy || reinstallInProgress || selectedTemplateId == 0)">@(Session.User!.IsAdmin ? "Reinstall this server now" : "Reinstall server now")</button>
+                                @if (Session.User!.IsAdmin)
+                                {
+                                    <a class="button" href="templates">Manage OS Templates</a>
+                                }
+                            </div>
+                        </div>
+                    }
+                    else
+                    {
+                        <div class="friendly-empty-state">
+                            <div class="empty-illustration">▤</div>
+                            <div>
+                                <h2>No reinstall templates available</h2>
+                                <p>@(Session.User!.IsAdmin ? "Add a global VHDX template in OS Templates, then return here to reinstall this server." : "No reinstall templates are available for clients yet. Please contact support if you need an OS reinstall.")</p>
+                                @if (Session.User!.IsAdmin)
+                                {
+                                    <a class="button primary" href="templates">Open OS Templates</a>
+                                }
+                            </div>
+                        </div>
+                    }
+                    @if (Session.User!.IsAdmin)
+                    {
+                        <hr class="soft-line" />
+                        <div class="panel-head sub-head">
+                            <h2>Recent reinstall requests</h2>
+                            <span class="muted">Requests for this server</span>
+                        </div>
+                        @if (reinstallRequests.Count == 0)
+                        {
+                            <p class="muted">No reinstall requests yet.</p>
+                        }
+                        else
+                        {
+                            <table class="data-table compact-table">
+                                <thead><tr><th>Time</th><th>Template</th><th>Status</th><th>Notes</th><th>Actions</th></tr></thead>
+                                <tbody>
+                                    @foreach (var request in reinstallRequests)
+                                    {
+                                        <tr>
+                                            <td>@request.CreatedAt.ToLocalTime()</td>
+                                            <td>@request.TemplateName</td>
+                                            <td><span class="pill">@request.Status</span></td>
+                                            <td>@request.Notes</td>
+                                            <td class="button-row">
+                                                <button class="button mini primary" @onclick='() => RunReinstallNow(request.Id)' disabled='@(busy || reinstallInProgress || string.Equals(request.Status, "completed", StringComparison.OrdinalIgnoreCase))'>Run now</button>
+                                                <button class="button mini" @onclick='() => UpdateRequestStatus(request.Id, "rejected")' disabled="@(busy || reinstallInProgress)">Reject</button>
+                                            </td>
+                                        </tr>
+                                    }
+                                </tbody>
+                            </table>
+                        }
+                    }
+
+                </section>
+            }
+            else if (activeTab == "activity")
+            {
+                <section>
+                    <div class="panel-head">
+                        <h2>Activity</h2>
+                        <span class="muted">Recent actions for this VM</span>
+                    </div>
+                    @if (auditLogs.Count == 0)
+                    {
+                        <p class="muted">No audit entries for this VM yet.</p>
+                    }
+                    else
+                    {
+                        <table class="data-table compact-table">
+                            <thead><tr><th>Time</th><th>Action</th><th>Details</th></tr></thead>
+                            <tbody>
+                                @foreach (var log in auditLogs)
+                                {
+                                    <tr>
+                                        <td>@log.CreatedAt.ToLocalTime()</td>
+                                        <td><span class="pill">@log.Action</span></td>
+                                        <td>@log.Details</td>
+                                    </tr>
+                                }
+                            </tbody>
+                        </table>
+                    }
+                </section>
+            }
+            else if (activeTab == "settings")
+            {
+                <section>
+                    <div class="panel-head">
+                        <h2>Settings</h2>
+                        <span class="muted">Server access and permissions</span>
+                    </div>
+                    <div class="settings-list server-settings-list">
+                        <div><span>Server name</span><strong>@vm.Name</strong></div>
+                        <div><span>Panel role</span><strong>@Session.User!.Role</strong></div>
+                        <div><span>Access scope</span><strong>@(Session.User!.IsAdmin ? "All virtual servers" : "Only assigned virtual servers")</strong></div>
+                        <div><span>Permission enforcement</span><strong>User Manager + backend checked</strong></div>
+                        <div><span>Enabled tabs</span><strong>@string.Join(", ", AllowedTabs())</strong></div>
+                        <div><span>Remote console</span><strong>@ConsoleModeText()</strong></div>
+                    </div>
+                    @if (Session.User!.IsAdmin)
+                    {
+                        <hr class="soft-line" />
+                        <div class="panel-head sub-head">
+                            <h2>Public status integration</h2>
+                            <span class="muted">Expose safe status data through /api/public/status</span>
+                        </div>
+                        <div class="form-grid">
+                            <label class="switch-row full-row"><input type="checkbox" @bind="publicStatusEnabled" /> Show this VM in the public status API</label>
+                            <label>Display name<input @bind="publicStatusDisplayName" placeholder="Public server name" /></label>
+                            <label>Port to show/check<input type="number" @bind="publicStatusPort" placeholder="Optional" /></label>
+                            <label class="full-row">Public note<textarea @bind="publicStatusNote" placeholder="Optional note for your status page"></textarea></label>
+                            <div class="notice-card full-row compact-notice">
+                                <strong>Status endpoint</strong>
+                                <p>Use <code>/api/public/status</code> from your Penguin status site. It only exposes VMs you enable here.</p>
+                            </div>
+                            <div class="form-actions full-row">
+                                <button class="button primary" @onclick="SavePublicStatusSettings" disabled="@busy">Save public status settings</button>
+                            </div>
+                        </div>
+
+                        <div class="form-actions settings-actions">
+                            <a class="button" href="users">Manage assignments</a>
+                            <a class="button" href="abuse">Abuse protection</a>
+                        </div>
+                    }
+                </section>
+            }
+        </main>
+    </div>
+}
+
+@code {
+    [SupplyParameterFromQuery(Name = "vm")]
+    public string? VmName { get; set; }
+
+    private VmInfo? vm;
+    private VmAccessInfo access = new("", "", "", 3389, null, "Administrator", "", "", "", DateTime.UtcNow);
+    private VmNetworkPortProfile networkProfile = new("", "", "", "", "", true, 3389, 3389, false, 30120, 30120, "", "", "", "", "", DateTime.UtcNow);
+    private VmPublicStatusSettings publicStatusSettings = new("", false, "", "", null, DateTime.UtcNow);
+    private VmGuestAgentSettings guestAgentSettings = new("", false, false, null, "", "", DateTime.UtcNow);
+    private IReadOnlyList<GuestAgentCommand> guestAgentCommands = [];
+    private IReadOnlyList<PortMappingConflict> portConflicts = [];
+    private bool portCheckCompleted;
+    private IReadOnlyList<VmGuestFirewallRule> guestFirewallRules = [];
+    private bool firewallRulesLoaded;
+    private string firewallRulesVmName = "";
+    private string firewallRuleName = "";
+    private string firewallProtocol = "TCP";
+    private int firewallLocalPort = 30120;
+    private string firewallRemoteAddress = "Any";
+    private string firewallAction = "Allow";
+    private IReadOnlyList<AuditLogEntry> auditLogs = [];
+    private IReadOnlyList<VmCheckpointInfo> checkpoints = [];
+    private string checkpointError = string.Empty;
+    private IReadOnlyList<VmTemplate> templates = [];
+    private IReadOnlyList<ReinstallRequest> reinstallRequests = [];
+    private string activeTab = "console";
+    private string tabDataVmName = "";
+    private bool recoveryDataLoaded;
+    private bool backupsDataLoaded;
+    private bool reinstallDataLoaded;
+    private bool activityDataLoaded;
+    private bool settingsDataLoaded;
+    private VmRdpListenerStatus? rdpListenerStatus;
+    private bool rdpListenerChecking;
+    private bool rdpListenerChanging;
+    private bool tabLoading;
+    private string? message;
+    private string? lastAction;
+    private string messageClass = "alert success";
+    private bool busy;
+    private bool powerInProgress;
+    private string powerAction = string.Empty;
+    private int powerProgress;
+    private string powerStatus = string.Empty;
+    private bool loading;
+    private DateTime lastLoaded = DateTime.Now;
+    private bool showPassword;
+    private bool restoreInProgress;
+    private int restoreProgress;
+    private string restoreStatus = string.Empty;
+    private bool reinstallInProgress;
+    private int reinstallProgress;
+    private string reinstallStatus = string.Empty;
+    private string reinstallCompletionNote = string.Empty;
+
+    private string accessHost = "";
+    private string accessIp = "";
+    private int? accessRdpPort = 3389;
+    private int? accessSshPort;
+    private string accessUsername = "Administrator";
+    private string accessPassword = "";
+    private string accessNotes = "";
+    private string accessWebConsoleUrl = "";
+    private string remoteDesktopPassword = "";
+    private string remoteDesktopConfirmPassword = "";
+    private string generatedGuestAgentToken = "";
+    private string emergencyUsername = "Administrator";
+    private string emergencyPassword = "";
+    private string emergencyConfirmPassword = "";
+    private string emergencyVerificationCode = "";
+    private bool showEmergencyPassword;
+    private bool emergencySendPasswordEmail = true;
+    private bool emergencyForceLogoffSessions = true;
+    private bool emergencyRestartRemoteDesktopService = true;
+    private bool emergencyDisableOtherLocalAdministrators;
+    private bool emergencyDisableRemoteDesktopFirewall;
+
+    private string profileNatName = "";
+    private string profileInternalIp = "";
+    private string profilePublicIp = "";
+    private string profilePublicHostname = "";
+    private bool profileEnableRdp = true;
+    private int? profileRdpExternalPort = 3389;
+    private int profileRdpInternalPort = 3389;
+    private bool profileEnableFiveM;
+    private int? profileFiveMExternalPort = 30120;
+    private int profileFiveMInternalPort = 30120;
+    private string profileExtraTcpPorts = "";
+    private string profileExtraUdpPorts = "";
+    private string profileDnsInterfaceAlias = "";
+    private string profilePreferredDns = "";
+    private string profileAlternateDns = "";
+
+    private bool publicStatusEnabled;
+    private string publicStatusDisplayName = "";
+    private string publicStatusNote = "";
+    private int? publicStatusPort;
+
+    private string checkpointName = "";
+    private long selectedTemplateId;
+    private string reinstallNotes = "";
+    private string templateName = "";
+    private string templateOs = "Windows";
+    private string templateIsoPath = "";
+    private string templateStorageFolder = @"D:\PenguinPanel\Templates";
+    private string templateNotes = "";
+    private bool templateEnabled = true;
+    private string templateStatus = string.Empty;
+
+    protected override void OnInitialized()
+    {
+        Session.Changed += OnSessionChanged;
+    }
+
+    protected override async Task OnParametersSetAsync()
+    {
+        if (Session.IsLoggedIn)
+        {
+            await Load();
+        }
+    }
+
+    private async Task Load(bool showPageLoading = true)
+    {
+        if (showPageLoading)
+        {
+            loading = true;
+        }
+        try
+        {
+            if (string.IsNullOrWhiteSpace(VmName))
+            {
+                vm = null;
+                return;
+            }
+
+            vm = await Panel.GetVmAsync(Session.User, VmName);
+            if (vm is null)
+            {
+                return;
+            }
+
+            ResetLazyTabStateIfVmChanged(vm.Name);
+
+            if (!string.Equals(firewallRulesVmName, vm.Name, StringComparison.OrdinalIgnoreCase))
+            {
+                guestFirewallRules = [];
+                firewallRulesLoaded = false;
+                firewallRulesVmName = string.Empty;
+            }
+
+            access = await Panel.GetVmAccessInfoAsync(Session.User, vm.Name);
+            CopyAccessToEditFields();
+
+            // The network profile is cheap database state and is used by the sidebar and Access tab
+            // to explain public -> private port routing. Keep it warm for admins, but leave the
+            // expensive PowerShell/backup/firewall/reinstall reads lazy.
+            if (Session.User!.IsAdmin)
+            {
+                networkProfile = await Panel.GetVmNetworkPortProfileAsync(Session.User, vm.Name);
+                CopyNetworkProfileToEditFields();
+                portConflicts = [];
+                portCheckCompleted = false;
+            }
+
+            EnsureAllowedActiveTab();
+            await LoadActiveTabDataAsync(force: true);
+            lastLoaded = DateTime.Now;
+        }
+        catch (Exception ex)
+        {
+            vm = null;
+            messageClass = "alert";
+            message = ex.Message;
+        }
+        finally
+        {
+            if (showPageLoading)
+            {
+                loading = false;
+            }
+        }
+    }
+
+    private void ResetLazyTabStateIfVmChanged(string vmName)
+    {
+        if (string.Equals(tabDataVmName, vmName, StringComparison.OrdinalIgnoreCase))
+        {
+            return;
+        }
+
+        tabDataVmName = vmName;
+        recoveryDataLoaded = false;
+        backupsDataLoaded = false;
+        reinstallDataLoaded = false;
+        activityDataLoaded = false;
+        settingsDataLoaded = false;
+        rdpListenerStatus = null;
+        guestAgentSettings = new(vmName, false, false, null, "", "", DateTime.UtcNow);
+        guestAgentCommands = [];
+        auditLogs = [];
+        checkpoints = [];
+        checkpointError = string.Empty;
+        templates = [];
+        reinstallRequests = [];
+        publicStatusSettings = new(vmName, false, "", "", null, DateTime.UtcNow);
+    }
+
+    private async Task OpenTab(string tab)
+    {
+        if (!CanViewTab(tab))
+        {
+            return;
+        }
+
+        activeTab = tab;
+        var needsRemoteLoad = TabNeedsLazyLoad(tab);
+        if (needsRemoteLoad)
+        {
+            tabLoading = true;
+            await InvokeAsync(StateHasChanged);
+        }
+
+        try
+        {
+            await LoadActiveTabDataAsync(force: false);
+        }
+        catch (Exception ex)
+        {
+            messageClass = "alert";
+            message = ex.Message;
+        }
+        finally
+        {
+            if (needsRemoteLoad)
+            {
+                tabLoading = false;
+            }
+        }
+    }
+
+    private bool TabNeedsLazyLoad(string tab) => tab switch
+    {
+        "recovery" => !recoveryDataLoaded,
+        "backups" => !backupsDataLoaded,
+        "reinstall" => !reinstallDataLoaded,
+        "activity" => !activityDataLoaded,
+        "settings" => Session.User?.IsAdmin == true && !settingsDataLoaded,
+        _ => false
+    };
+
+    private async Task LoadActiveTabDataAsync(bool force)
+    {
+        if (vm is null)
+        {
+            return;
+        }
+
+        switch (activeTab)
+        {
+            case "recovery" when CanViewTab("recovery") && (force || !recoveryDataLoaded):
+                guestAgentSettings = await Panel.GetVmGuestAgentSettingsAsync(Session.User, vm.Name);
+                guestAgentCommands = CanManageGuestAgent()
+                    ? await Panel.GetGuestAgentCommandsForVmAsync(Session.User, vm.Name)
+                    : [];
+                if (string.IsNullOrWhiteSpace(emergencyUsername) || !CanManageGuestAgent())
+                {
+                    emergencyUsername = string.IsNullOrWhiteSpace(access.Username) ? "Administrator" : access.Username;
+                }
+                recoveryDataLoaded = true;
+                break;
+
+            case "backups" when CanViewTab("backups") && (force || !backupsDataLoaded):
+                await LoadCheckpoints();
+                backupsDataLoaded = true;
+                break;
+
+            case "reinstall" when CanViewTab("reinstall") && (force || !reinstallDataLoaded):
+                templates = await Panel.GetVmTemplatesAsync(Session.User);
+                reinstallRequests = await Panel.GetReinstallRequestsAsync(Session.User, vm.Name);
+                reinstallDataLoaded = true;
+                break;
+
+            case "activity" when CanViewTab("activity") && (force || !activityDataLoaded):
+                auditLogs = await Panel.GetAuditLogsForVmAsync(Session.User, vm.Name);
+                activityDataLoaded = true;
+                break;
+
+            case "settings" when Session.User?.IsAdmin == true && (force || !settingsDataLoaded):
+                publicStatusSettings = await Panel.GetVmPublicStatusSettingsAsync(Session.User, vm.Name);
+                CopyPublicStatusToEditFields();
+                settingsDataLoaded = true;
+                break;
+        }
+    }
+
+    private void CopyAccessToEditFields()
+    {
+        accessHost = access.Hostname;
+        accessIp = access.IpAddress;
+        accessRdpPort = access.RdpPort;
+        accessSshPort = access.SshPort;
+        accessUsername = access.Username;
+        accessPassword = access.Password;
+        accessNotes = access.Notes;
+        accessWebConsoleUrl = access.WebConsoleUrl;
+    }
+
+    private void CopyNetworkProfileToEditFields()
+    {
+        profileNatName = networkProfile.NatName;
+        profileInternalIp = networkProfile.InternalIpAddress;
+        profilePublicIp = networkProfile.PublicIpAddress;
+        profilePublicHostname = networkProfile.PublicHostname;
+        profileEnableRdp = networkProfile.EnableRdp;
+        profileRdpExternalPort = networkProfile.RdpExternalPort;
+        profileRdpInternalPort = networkProfile.RdpInternalPort <= 0 ? 3389 : networkProfile.RdpInternalPort;
+        profileEnableFiveM = networkProfile.EnableFiveM;
+        profileFiveMExternalPort = networkProfile.FiveMExternalPort;
+        profileFiveMInternalPort = networkProfile.FiveMInternalPort <= 0 ? 30120 : networkProfile.FiveMInternalPort;
+        profileExtraTcpPorts = networkProfile.ExtraTcpPorts;
+        profileExtraUdpPorts = networkProfile.ExtraUdpPorts;
+        profileDnsInterfaceAlias = networkProfile.DnsInterfaceAlias;
+        profilePreferredDns = networkProfile.PreferredDnsServer;
+        profileAlternateDns = networkProfile.AlternateDnsServer;
+    }
+
+
+    private void CopyPublicStatusToEditFields()
+    {
+        publicStatusEnabled = publicStatusSettings.IsPublic;
+        publicStatusDisplayName = string.IsNullOrWhiteSpace(publicStatusSettings.DisplayName)
+            ? vm?.Name ?? string.Empty
+            : publicStatusSettings.DisplayName;
+        publicStatusNote = publicStatusSettings.PublicNote;
+        publicStatusPort = publicStatusSettings.PortCheckPort;
+    }
+
+
+    private async Task LoadCheckpoints()
+    {
+        if (vm is null || !CanViewTab("backups")) return;
+        try
+        {
+            checkpointError = string.Empty;
+            checkpoints = await Panel.GetCheckpointsAsync(Session.User, vm.Name);
+        }
+        catch (Exception ex)
+        {
+            checkpoints = [];
+            checkpointError = ex.Message;
+        }
+    }
+
+    private async Task Run(string action)
+    {
+        if (vm is null || !CanUsePowerActions()) return;
+
+        if (IsPowerButtonAction(action))
+        {
+            await RunPowerAction(action);
+            return;
+        }
+
+        await RunPanelAction(async () =>
+        {
+            await Panel.VmActionAsync(Session.User, action, vm.Name);
+            message = $"{ActionName(action)} sent to {vm.Name}.";
+            lastAction = message;
+            await Load(false);
+        });
+    }
+
+    private async Task RunPowerAction(string action)
+    {
+        if (vm is null || !CanRunPowerAction(action)) return;
+
+        busy = true;
+        powerInProgress = true;
+        powerAction = action;
+        powerProgress = 8;
+        powerStatus = $"Preparing to {ActionVerb(action)} {vm.Name}...";
+        message = null;
+        messageClass = "alert success";
+        await InvokeAsync(StateHasChanged);
+
+        try
+        {
+            await Task.Delay(150);
+            powerProgress = 28;
+            powerStatus = $"Sending {ActionName(action).ToLowerInvariant()} command to Hyper-V...";
+            await InvokeAsync(StateHasChanged);
+
+            await Panel.VmActionAsync(Session.User, action, vm.Name);
+
+            powerProgress = 68;
+            powerStatus = "Command accepted. Refreshing server state...";
+            await InvokeAsync(StateHasChanged);
+
+            await Load(false);
+
+            powerProgress = 100;
+            powerStatus = $"{ActionName(action)} completed.";
+            message = $"{ActionName(action)} sent to {vm?.Name ?? VmName}.";
+            lastAction = message;
+            await InvokeAsync(StateHasChanged);
+            await Task.Delay(700);
+        }
+        catch (Exception ex)
+        {
+            messageClass = "alert";
+            message = ex.Message;
+            lastAction = ex.Message;
+            powerStatus = $"{ActionName(action)} failed: {ex.Message}";
+            powerProgress = 100;
+            await InvokeAsync(StateHasChanged);
+            await Task.Delay(1200);
+        }
+        finally
+        {
+            powerInProgress = false;
+            powerAction = string.Empty;
+            powerProgress = 0;
+            powerStatus = string.Empty;
+            busy = false;
+            await InvokeAsync(StateHasChanged);
+        }
+    }
+
+    private async Task OpenFirewallTab()
+    {
+        activeTab = "firewall";
+        if (!firewallRulesLoaded && !busy)
+        {
+            tabLoading = true;
+            await InvokeAsync(StateHasChanged);
+            try
+            {
+                await LoadGuestFirewallRules();
+            }
+            finally
+            {
+                tabLoading = false;
+            }
+        }
+    }
+
+    private async Task LoadGuestFirewallRules()
+    {
+        if (vm is null) return;
+        await RunPanelAction(async () =>
+        {
+            guestFirewallRules = await Panel.GetVmGuestFirewallRulesAsync(Session.User, vm.Name);
+            firewallRulesLoaded = true;
+            firewallRulesVmName = vm.Name;
+            message = $"Loaded {guestFirewallRules.Count} PenguinPanel-managed Windows Firewall rule(s) from the VM.";
+        });
+    }
+
+    private async Task SyncGuestFirewall()
+    {
+        if (vm is null) return;
+        await RunPanelAction(async () =>
+        {
+            var result = await Panel.SyncVmGuestFirewallFromNetworkProfileAsync(Session.User, vm.Name);
+            guestFirewallRules = await Panel.GetVmGuestFirewallRulesAsync(Session.User, vm.Name);
+            firewallRulesLoaded = true;
+            firewallRulesVmName = vm.Name;
+            message = result.Message;
+            lastAction = result.Message;
+        });
+    }
+
+    private async Task AddGuestFirewallRule()
+    {
+        if (vm is null) return;
+        await RunPanelAction(async () =>
+        {
+            var action = Session.User!.IsAdmin ? firewallAction : "Allow";
+            await Panel.AddVmGuestFirewallRuleAsync(Session.User, vm.Name, firewallRuleName, firewallProtocol, firewallLocalPort, firewallRemoteAddress, action);
+            guestFirewallRules = await Panel.GetVmGuestFirewallRulesAsync(Session.User, vm.Name);
+            firewallRulesLoaded = true;
+            firewallRulesVmName = vm.Name;
+            message = $"Windows Firewall rule added for {firewallProtocol}/{firewallLocalPort}.";
+            lastAction = message;
+            firewallRuleName = "";
+        });
+    }
+
+    private async Task RemoveGuestFirewallRule(VmGuestFirewallRule rule)
+    {
+        if (vm is null || rule.IsAutomatic) return;
+        var confirmed = await JS.InvokeAsync<bool>("confirm", $"Delete Windows Firewall rule '{rule.DisplayName}' from {vm.Name}?");
+        if (!confirmed) return;
+
+        await RunPanelAction(async () =>
+        {
+            await Panel.RemoveVmGuestFirewallRuleAsync(Session.User, vm.Name, rule.Name);
+            guestFirewallRules = await Panel.GetVmGuestFirewallRulesAsync(Session.User, vm.Name);
+            firewallRulesLoaded = true;
+            firewallRulesVmName = vm.Name;
+            message = "Windows Firewall rule deleted.";
+            lastAction = message;
+        });
+    }
+
+    private async Task ScanNetwork()
+    {
+        if (vm is null) return;
+        await RunPanelAction(async () =>
+        {
+            message = await Panel.ScanVmForOutboundAbuseAsync(Session.User, vm.Name);
+            lastAction = message;
+            await Load();
+        });
+    }
+
+    private async Task SaveNetworkProfile()
+    {
+        if (vm is null) return;
+        await RunPanelAction(async () =>
+        {
+            var profile = BuildNetworkProfileFromEditFields();
+            await Panel.SaveVmNetworkPortProfileAsync(Session.User, profile, updateAccessDetails: true);
+            networkProfile = profile;
+            message = "Network profile saved. Access tab RDP details were updated from the profile.";
+            await Load();
+        });
+    }
+
+    private async Task ApplyNetworkProfile()
+    {
+        if (vm is null) return;
+        await RunPanelAction(async () =>
+        {
+            var profile = BuildNetworkProfileFromEditFields();
+            await Panel.SaveVmNetworkPortProfileAsync(Session.User, profile, updateAccessDetails: true);
+            var result = await Panel.ApplyVmNetworkPortProfileAsync(Session.User, vm.Name);
+            message = result.Message;
+            lastAction = result.Message;
+            await Load();
+        });
+    }
+
+    private async Task ApplyGuestDnsSettings()
+    {
+        if (vm is null) return;
+        await RunPanelAction(async () =>
+        {
+            var profile = BuildNetworkProfileFromEditFields();
+            var result = await Panel.ApplyVmGuestDnsSettingsAsync(Session.User, profile);
+            message = result;
+            lastAction = result;
+            await Load();
+        });
+    }
+
+    private async Task RepairGuestInternet()
+    {
+        if (vm is null) return;
+        await RunPanelAction(async () =>
+        {
+            var profile = BuildNetworkProfileFromEditFields();
+            await Panel.SaveVmNetworkPortProfileAsync(Session.User, profile, updateAccessDetails: true);
+            var result = await Panel.RepairVmGuestInternetAsync(Session.User, vm.Name);
+            message = result.Message;
+            lastAction = result.Message;
+            await Load();
+        });
+    }
+
+    private void CopyNetworkProfileFromAccess()
+    {
+        profilePublicIp = accessIp;
+        profilePublicHostname = accessHost;
+        profileRdpExternalPort = accessRdpPort is > 0 ? accessRdpPort : 3389;
+        profileRdpInternalPort = profileRdpExternalPort is > 0 ? profileRdpExternalPort.Value : 3389;
+        profileEnableRdp = true;
+        if (profileFiveMExternalPort is null or <= 0)
+        {
+            profileFiveMExternalPort = 30120;
+        }
+        if (profileFiveMInternalPort <= 0)
+        {
+            profileFiveMInternalPort = 30120;
+        }
+    }
+
+    private VmNetworkPortProfile BuildNetworkProfileFromEditFields()
+    {
+        if (vm is null)
+        {
+            throw new InvalidOperationException("No VM selected.");
+        }
+
+        return new VmNetworkPortProfile(
+            vm.Name,
+            profileNatName,
+            profileInternalIp,
+            profilePublicIp,
+            profilePublicHostname,
+            profileEnableRdp,
+            profileRdpExternalPort,
+            profileRdpInternalPort,
+            profileEnableFiveM,
+            profileFiveMExternalPort,
+            profileFiveMInternalPort,
+            profileExtraTcpPorts,
+            profileExtraUdpPorts,
+            profileDnsInterfaceAlias,
+            profilePreferredDns,
+            profileAlternateDns,
+            DateTime.UtcNow);
+    }
+
+    private async Task CheckPortConflicts()
+    {
+        if (vm is null) return;
+        await RunPanelAction(async () =>
+        {
+            portConflicts = await Panel.CheckVmNetworkPortConflictsAsync(Session.User, BuildNetworkProfileFromEditFields());
+            portCheckCompleted = true;
+            message = portConflicts.Count == 0
+                ? "No port conflicts found."
+                : $"Found {portConflicts.Count} port conflict(s). Fix them before saving/applying the profile.";
+            messageClass = portConflicts.Count == 0 ? "alert success" : "alert";
+        });
+    }
+
+    private async Task SavePublicStatusSettings()
+    {
+        if (vm is null) return;
+        await RunPanelAction(async () =>
+        {
+            var settings = new VmPublicStatusSettings(
+                vm.Name,
+                publicStatusEnabled,
+                string.IsNullOrWhiteSpace(publicStatusDisplayName) ? vm.Name : publicStatusDisplayName.Trim(),
+                publicStatusNote ?? string.Empty,
+                publicStatusPort is >= 1 and <= 65535 ? publicStatusPort : null,
+                DateTime.UtcNow);
+
+            await Panel.SaveVmPublicStatusSettingsAsync(Session.User, settings);
+            publicStatusSettings = settings;
+            message = publicStatusEnabled
+                ? "Public status enabled for this VM. Your status page can read it from /api/public/status."
+                : "Public status disabled for this VM.";
+            await Load(false);
+        });
+    }
+
+    private async Task SaveAccess()
+    {
+        if (vm is null) return;
+        await RunPanelAction(async () =>
+        {
+            var info = new VmAccessInfo(vm.Name, accessHost, accessIp, accessRdpPort, accessSshPort, accessUsername, accessPassword, accessNotes, accessWebConsoleUrl, DateTime.UtcNow);
+            await Panel.SaveVmAccessInfoAsync(Session.User, info);
+            access = info;
+            message = "Access details saved.";
+            await Load();
+        });
+    }
+
+    private async Task ResetStoredPassword()
+    {
+        if (vm is null) return;
+        await RunPanelAction(async () =>
+        {
+            message = await Panel.ResetStoredVmPasswordAsync(Session.User, vm.Name, accessPassword);
+            await Load();
+        });
+    }
+
+    private async Task VerifyRdpListener()
+    {
+        if (vm is null) return;
+        rdpListenerChecking = true;
+        try
+        {
+            await RunPanelAction(async () =>
+            {
+                rdpListenerStatus = await Panel.GetVmRdpListenerStatusAsync(Session.User, vm.Name);
+                var expected = networkProfile.RdpInternalPort <= 0 ? 3389 : networkProfile.RdpInternalPort;
+                messageClass = rdpListenerStatus.IsReady && rdpListenerStatus.Port == expected ? "alert success" : "alert";
+                message = rdpListenerStatus.IsReady
+                    ? rdpListenerStatus.Port == expected
+                        ? $"Windows RDP is listening correctly on TCP {rdpListenerStatus.Port}."
+                        : $"Windows RDP is listening on TCP {rdpListenerStatus.Port}, but PenguinPanel WinNAT expects internal TCP {expected}. Use Match Windows RDP to public port, or update the Network profile."
+                    : $"Windows RDP check completed on TCP {rdpListenerStatus.Port}, but one or more required RDP components are not ready.";
+                lastAction = message;
+            });
+        }
+        finally
+        {
+            rdpListenerChecking = false;
+        }
+    }
+
+    private async Task SyncRdpPortToPublic()
+    {
+        if (vm is null) return;
+        rdpListenerChanging = true;
+        try
+        {
+            await RunPanelAction(async () =>
+            {
+                rdpListenerStatus = await Panel.SyncVmWindowsRdpPortToPublicAsync(Session.User, vm.Name);
+                networkProfile = await Panel.GetVmNetworkPortProfileAsync(Session.User, vm.Name);
+                CopyNetworkProfileToEditFields();
+                access = await Panel.GetVmAccessInfoAsync(Session.User, vm.Name);
+                CopyAccessToEditFields();
+                messageClass = rdpListenerStatus.IsReady ? "alert success" : "alert";
+                message = rdpListenerStatus.IsReady
+                    ? $"Windows RDP, guest firewall, and WinNAT are now aligned on TCP {rdpListenerStatus.Port}. Public endpoint: {RdpText()}."
+                    : $"The RDP port was updated to TCP {rdpListenerStatus.Port}, but the listener did not report ready yet. Reboot the VPS once and verify again.";
+                lastAction = message;
+            });
+        }
+        finally
+        {
+            rdpListenerChanging = false;
+        }
+    }
+
+    private string RdpNatTargetText()
+    {
+        var internalIp = !string.IsNullOrWhiteSpace(networkProfile.InternalIpAddress)
+            ? networkProfile.InternalIpAddress
+            : profileInternalIp;
+        var internalPort = networkProfile.RdpInternalPort > 0 ? networkProfile.RdpInternalPort : 3389;
+        return string.IsNullOrWhiteSpace(internalIp) ? $"Internal TCP {internalPort}" : $"{internalIp}:{internalPort}";
+    }
+
+    private string RdpListenerText()
+    {
+        if (rdpListenerStatus is null)
+        {
+            return "Not verified yet";
+        }
+
+        var status = rdpListenerStatus.IsReady ? "ready" : "not ready";
+        return $"TCP {rdpListenerStatus.Port} ({status}, checked {rdpListenerStatus.CheckedAt.ToLocalTime():HH:mm:ss})";
+    }
+
+    private async Task ChangeRemoteDesktopPassword()
+    {
+        if (vm is null) return;
+        await RunPanelAction(async () =>
+        {
+            if (remoteDesktopPassword != remoteDesktopConfirmPassword)
+            {
+                throw new InvalidOperationException("The Remote Desktop passwords do not match.");
+            }
+
+            message = await Panel.ChangeVmRemoteDesktopPasswordAsync(Session.User, vm.Name, remoteDesktopPassword);
+            remoteDesktopPassword = "";
+            remoteDesktopConfirmPassword = "";
+            await Load();
+        });
+    }
+
+    private void GenerateVmPassword()
+    {
+        accessPassword = $"Vm-{Guid.NewGuid():N}"[..16] + "!";
+    }
+
+    private void GenerateRemoteDesktopPassword()
+    {
+        remoteDesktopPassword = $"Rdp-{Guid.NewGuid():N}"[..18] + "!";
+        remoteDesktopConfirmPassword = remoteDesktopPassword;
+    }
+
+
+    private void GenerateEmergencyPassword()
+    {
+        emergencyPassword = $"Emergency-{Guid.NewGuid():N}"[..24] + "!";
+        emergencyConfirmPassword = emergencyPassword;
+        showEmergencyPassword = true;
+        if (string.IsNullOrWhiteSpace(emergencyUsername) || !CanManageGuestAgent())
+        {
+            emergencyUsername = string.IsNullOrWhiteSpace(access.Username) ? "Administrator" : access.Username;
+        }
+    }
+
+    private void ToggleEmergencyPasswordVisibility()
+    {
+        showEmergencyPassword = !showEmergencyPassword;
+    }
+
+    private async Task GenerateGuestAgentToken()
+    {
+        if (vm is null) return;
+        await RunPanelAction(async () =>
+        {
+            var result = await Panel.GenerateVmGuestAgentTokenAsync(Session.User, vm.Name);
+            guestAgentSettings = result.Settings;
+            generatedGuestAgentToken = result.Token;
+            message = "Guest Agent token generated. Copy it now and place it in the VM agent config.";
+            guestAgentCommands = await Panel.GetGuestAgentCommandsForVmAsync(Session.User, vm.Name);
+        });
+    }
+
+    private async Task SetGuestAgentEnabled(bool enabled)
+    {
+        if (vm is null) return;
+        await RunPanelAction(async () =>
+        {
+            guestAgentSettings = await Panel.SetVmGuestAgentEnabledAsync(Session.User, vm.Name, enabled);
+            message = enabled ? "Guest Agent enabled." : "Guest Agent disabled.";
+            generatedGuestAgentToken = "";
+        });
+    }
+
+    private async Task SendEmergencyResetCode()
+    {
+        if (vm is null) return;
+        await RunPanelAction(async () =>
+        {
+            var username = CanManageGuestAgent()
+                ? (string.IsNullOrWhiteSpace(emergencyUsername) ? access.Username : emergencyUsername)
+                : (string.IsNullOrWhiteSpace(access.Username) ? "Administrator" : access.Username);
+            message = await Panel.RequestEmergencyGuestPasswordResetCodeAsync(Session.User, vm.Name, username);
+            emergencyVerificationCode = "";
+        });
+    }
+
+    private async Task QueueEmergencyPasswordReset()
+    {
+        if (vm is null) return;
+        await RunPanelAction(async () =>
+        {
+            if (emergencyPassword != emergencyConfirmPassword)
+            {
+                throw new InvalidOperationException("The emergency passwords do not match.");
+            }
+
+            var resetUsername = CanManageGuestAgent()
+                ? (string.IsNullOrWhiteSpace(emergencyUsername) ? access.Username : emergencyUsername)
+                : (string.IsNullOrWhiteSpace(access.Username) ? "Administrator" : access.Username);
+
+            var result = await Panel.QueueEmergencyGuestPasswordResetAsync(
+                Session.User,
+                vm.Name,
+                resetUsername,
+                emergencyPassword,
+                emergencyVerificationCode,
+                emergencySendPasswordEmail,
+                CanManageGuestAgent() ? emergencyForceLogoffSessions : true,
+                CanManageGuestAgent() ? emergencyRestartRemoteDesktopService : true,
+                CanManageGuestAgent() && emergencyDisableOtherLocalAdministrators,
+                CanManageGuestAgent() && emergencyDisableRemoteDesktopFirewall);
+
+            message = result.Message;
+            emergencyVerificationCode = "";
+            if (!emergencySendPasswordEmail || result.PasswordEmailSent)
+            {
+                emergencyPassword = "";
+                emergencyConfirmPassword = "";
+                showEmergencyPassword = false;
+            }
+            else
+            {
+                showEmergencyPassword = true;
+            }
+            guestAgentSettings = await Panel.GetVmGuestAgentSettingsAsync(Session.User, vm.Name);
+            guestAgentCommands = CanManageGuestAgent()
+                ? await Panel.GetGuestAgentCommandsForVmAsync(Session.User, vm.Name)
+                : [];
+            await Load(false);
+        });
+    }
+
+    private async Task CreateCheckpoint()
+    {
+        if (vm is null) return;
+        await RunPanelAction(async () =>
+        {
+            await Panel.CreateCheckpointAsync(Session.User, vm.Name, checkpointName);
+            message = "Checkpoint created. Restore point list refreshed.";
+            checkpointName = "";
+            await Task.Delay(800);
+            await LoadCheckpoints();
+        });
+    }
+
+    private async Task RestoreCheckpoint(string name)
+    {
+        if (vm is null || restoreInProgress) return;
+
+        var confirmed = await JS.InvokeAsync<bool>(
+            "confirm",
+            $"Restore checkpoint '{name}'?\n\nThis will stop {vm.Name} if it is running, restore the selected checkpoint, and leave the VM stopped. You will need to press Start when you are ready.");
+
+        if (!confirmed)
+        {
+            return;
+        }
+
+        busy = true;
+        restoreInProgress = true;
+        restoreProgress = 5;
+        restoreStatus = "Preparing safe restore...";
+        messageClass = "alert success";
+        message = null;
+        await InvokeAsync(StateHasChanged);
+
+        try
+        {
+            var wasRunningInUi = IsRunningState(vm.State);
+            restoreProgress = 20;
+            restoreStatus = wasRunningInUi
+                ? "Stopping the VM before restore. It will stay stopped afterwards."
+                : "VM is already stopped. Restoring checkpoint.";
+            await InvokeAsync(StateHasChanged);
+
+            var result = await Panel.RestoreCheckpointAsync(Session.User, vm.Name, name);
+
+            restoreProgress = 80;
+            restoreStatus = "Restore completed. Refreshing VM state and restore points...";
+            await InvokeAsync(StateHasChanged);
+
+            await Load();
+
+            restoreProgress = 100;
+            restoreStatus = result.Message;
+            message = result.Message;
+            lastAction = result.Message;
+        }
+        catch (Exception ex)
+        {
+            messageClass = "alert";
+            message = ex.Message;
+            lastAction = ex.Message;
+            restoreStatus = "Restore failed: " + ex.Message;
+        }
+        finally
+        {
+            restoreInProgress = false;
+            busy = false;
+            await InvokeAsync(StateHasChanged);
+        }
+    }
+
+    private async Task DeleteCheckpoint(string name)
+    {
+        if (vm is null) return;
+        await RunPanelAction(async () =>
+        {
+            await Panel.DeleteCheckpointAsync(Session.User, vm.Name, name);
+            message = $"Checkpoint {name} deleted.";
+            await LoadCheckpoints();
+        });
+    }
+
+    private async Task RequestReinstall()
+    {
+        if (vm is null) return;
+        await RunPanelAction(async () =>
+        {
+            await Panel.RequestReinstallAsync(Session.User, vm.Name, selectedTemplateId, reinstallNotes);
+            message = "Reinstall request created.";
+            selectedTemplateId = 0;
+            reinstallNotes = "";
+            await Load();
+        });
+    }
+
+    private async Task RunDirectReinstallNow()
+    {
+        if (vm is null || selectedTemplateId == 0 || reinstallInProgress) return;
+
+        var templateNameForConfirm = templates.FirstOrDefault(t => t.Id == selectedTemplateId)?.Name ?? "selected template";
+        var confirmationText = Session.User!.IsAdmin
+            ? $"Reinstall {vm.Name} from template '{templateNameForConfirm}'?\n\nPenguinPanel will stop the VM, replace its primary disk with a fresh copy of the selected VHDX template, preserve the old disk file, start it again, and re-apply the saved Network / port profile."
+            : $"Reinstall your server from '{templateNameForConfirm}' now?\n\nThis will erase the current OS/data on the server disk, temporarily take the server offline, install the selected template, then start the server again automatically.";
+
+        var confirmed = await JS.InvokeAsync<bool>("confirm", confirmationText);
+
+        if (!confirmed)
+        {
+            return;
+        }
+
+        await RunReinstallWithProgress(selectedTemplateId, templateNameForConfirm);
+    }
+
+    private async Task RunReinstallWithProgress(long templateId, string templateName)
+    {
+        if (vm is null) return;
+
+        busy = true;
+        reinstallInProgress = true;
+        reinstallProgress = 5;
+        reinstallStatus = "Preparing reinstall...";
+        reinstallCompletionNote = string.Empty;
+        message = null;
+        messageClass = "alert success";
+        await InvokeAsync(StateHasChanged);
+
+        try
+        {
+            await Task.Delay(150);
+            reinstallProgress = 20;
+            reinstallStatus = "Stopping the virtual server and preparing a fresh OS disk...";
+            await InvokeAsync(StateHasChanged);
+
+            await Task.Delay(250);
+            reinstallProgress = 45;
+            reinstallStatus = $"Applying template {templateName}...";
+            reinstallCompletionNote = TemplateClientNote(templateId);
+            await InvokeAsync(StateHasChanged);
+
+            var result = await Panel.RunDirectReinstallAsync(Session.User, vm.Name, templateId, startAfter: true, notes: reinstallNotes);
+
+            reinstallProgress = 80;
+            reinstallStatus = "Re-applying network and remote desktop settings...";
+            await InvokeAsync(StateHasChanged);
+
+            await Load(false);
+
+            reinstallProgress = 100;
+            reinstallStatus = string.IsNullOrWhiteSpace(reinstallCompletionNote)
+                ? "Reinstall completed. Your server is starting again."
+                : $"Reinstall completed. Your server is starting again. {reinstallCompletionNote}";
+            message = string.IsNullOrWhiteSpace(reinstallCompletionNote)
+                ? result.Message
+                : $"{result.Message} {reinstallCompletionNote}";
+            lastAction = message;
+            selectedTemplateId = 0;
+            reinstallNotes = "";
+            await InvokeAsync(StateHasChanged);
+            await Task.Delay(1200);
+        }
+        catch (Exception ex)
+        {
+            messageClass = "alert";
+            message = ex.Message;
+            lastAction = ex.Message;
+            reinstallProgress = 100;
+            reinstallStatus = "Reinstall failed: " + ex.Message;
+            await InvokeAsync(StateHasChanged);
+            await Task.Delay(1600);
+        }
+        finally
+        {
+            reinstallInProgress = false;
+            busy = false;
+            await InvokeAsync(StateHasChanged);
+        }
+    }
+
+    private async Task UpdateRequestStatus(long requestId, string status)
+    {
+        await RunPanelAction(async () =>
+        {
+            await Panel.UpdateReinstallRequestStatusAsync(Session.User, requestId, status);
+            message = "Reinstall request updated.";
+            await Load();
+        });
+    }
+
+    private async Task RunReinstallNow(long requestId)
+    {
+        var confirmed = await JS.InvokeAsync<bool>(
+            "confirm",
+            "Run reinstall now?\n\nThis will stop the VM, replace its primary disk with a copy of the selected VHDX template, preserve the old disk file, and then start the VM again.");
+
+        if (!confirmed)
+        {
+            return;
+        }
+
+        await RunPanelAction(async () =>
+        {
+            var result = await Panel.RunReinstallRequestAsync(Session.User, requestId, startAfter: true);
+            message = result.Message;
+            lastAction = result.Message;
+            await Load();
+        });
+    }
+
+    private async Task CreateTemplateFromCurrentVm()
+    {
+        if (vm is null) return;
+
+        var name = string.IsNullOrWhiteSpace(templateName) ? $"{vm.Name} template" : templateName.Trim();
+        var confirmed = await JS.InvokeAsync<bool>(
+            "confirm",
+            $"Create template '{name}' from {vm.Name}?\n\nThe VM will be temporarily stopped while its primary virtual disk is copied. This can take a while depending on disk size.");
+
+        if (!confirmed)
+        {
+            return;
+        }
+
+        busy = true;
+        templateStatus = $"Stopping {vm.Name} if needed and copying the primary disk to the template folder...";
+        message = null;
+        messageClass = "alert success";
+        await InvokeAsync(StateHasChanged);
+
+        try
+        {
+            var result = await Panel.CreateTemplateFromVmAsync(Session.User, vm.Name, name, templateOs, templateStorageFolder, templateNotes, templateEnabled);
+            templateStatus = result.Message;
+            message = $"Template created: {result.TemplatePath}";
+            lastAction = message;
+            templateName = "";
+            templateIsoPath = "";
+            templateNotes = "";
+            templateOs = "Windows";
+            templateEnabled = true;
+            await Load();
+        }
+        catch (Exception ex)
+        {
+            messageClass = "alert";
+            message = ex.Message;
+            lastAction = ex.Message;
+            templateStatus = "Template creation failed: " + ex.Message;
+        }
+        finally
+        {
+            busy = false;
+            await InvokeAsync(StateHasChanged);
+        }
+    }
+
+    private async Task SaveTemplate()
+    {
+        await RunPanelAction(async () =>
+        {
+            var template = new VmTemplate(0, templateName, templateOs, templateIsoPath, templateNotes, templateEnabled, DateTime.UtcNow);
+            await Panel.SaveVmTemplateAsync(Session.User, template);
+            message = "Template saved.";
+            templateName = "";
+            templateOs = "Windows";
+            templateIsoPath = "";
+            templateNotes = "";
+            templateEnabled = true;
+            await Load();
+        });
+    }
+
+    private async Task DeleteTemplate(long id)
+    {
+        await RunPanelAction(async () =>
+        {
+            await Panel.DeleteVmTemplateAsync(Session.User, id);
+            message = "Template deleted.";
+            await Load();
+        });
+    }
+
+    private async Task RunPanelAction(Func<Task> action)
+    {
+        busy = true;
+        try
+        {
+            messageClass = "alert success";
+            await action();
+        }
+        catch (Exception ex)
+        {
+            messageClass = "alert";
+            message = ex.Message;
+            lastAction = ex.Message;
+        }
+        finally
+        {
+            busy = false;
+        }
+    }
+
+    private string NetworkProfilePreview()
+    {
+        var parts = new List<string>();
+        if (!string.IsNullOrWhiteSpace(profileInternalIp))
+        {
+            parts.Add($"internal {profileInternalIp}");
+        }
+        if (profileEnableRdp && profileRdpExternalPort is > 0)
+        {
+            parts.Add($"RDP {PublicEndpoint(profileRdpExternalPort)} → {profileInternalIp}:{profileRdpInternalPort}");
+        }
+        if (profileEnableFiveM && profileFiveMExternalPort is > 0)
+        {
+            parts.Add($"FiveM TCP/UDP {PublicEndpoint(profileFiveMExternalPort)} → {profileInternalIp}:{profileFiveMInternalPort}");
+        }
+        if (!string.IsNullOrWhiteSpace(profileExtraTcpPorts) || !string.IsNullOrWhiteSpace(profileExtraUdpPorts))
+        {
+            parts.Add("extra custom ports enabled");
+        }
+        if (!string.IsNullOrWhiteSpace(profilePreferredDns) || !string.IsNullOrWhiteSpace(profileAlternateDns))
+        {
+            var dns = string.Join(", ", new[] { profilePreferredDns, profileAlternateDns }.Where(item => !string.IsNullOrWhiteSpace(item)));
+            parts.Add($"guest DNS {dns}");
+        }
+
+        return parts.Count == 0
+            ? "No port rules configured yet. Fill Internal VM IPv4 and the ports you want PenguinPanel to preserve."
+            : string.Join(" • ", parts);
+    }
+
+    private string PublicEndpoint(int? port)
+    {
+        var host = !string.IsNullOrWhiteSpace(profilePublicIp) ? profilePublicIp : profilePublicHostname;
+        host = string.IsNullOrWhiteSpace(host) ? "public-host" : host;
+        return port is > 0 ? $"{host}:{port}" : host;
+    }
+
+    private string RdpText()
+    {
+        var host = !string.IsNullOrWhiteSpace(access.IpAddress) ? access.IpAddress : access.Hostname;
+        if (string.IsNullOrWhiteSpace(host)) return "Not set";
+        return access.RdpPort is null or <= 0 ? host : $"{host}:{access.RdpPort}";
+    }
+
+    private string FiveMText()
+    {
+        if (!networkProfile.EnableFiveM || networkProfile.FiveMExternalPort is null or <= 0) return "Not set";
+        var host = !string.IsNullOrWhiteSpace(networkProfile.PublicIpAddress)
+            ? networkProfile.PublicIpAddress
+            : networkProfile.PublicHostname;
+        if (string.IsNullOrWhiteSpace(host))
+        {
+            host = !string.IsNullOrWhiteSpace(access.IpAddress) ? access.IpAddress : access.Hostname;
+        }
+        if (string.IsNullOrWhiteSpace(host)) return "Not set";
+        return $"{host}:{networkProfile.FiveMExternalPort}";
+    }
+
+    private string SshText()
+    {
+        var host = !string.IsNullOrWhiteSpace(access.IpAddress) ? access.IpAddress : access.Hostname;
+        if (string.IsNullOrWhiteSpace(host) || access.SshPort is null or <= 0) return "Not set";
+        return $"{host}:{access.SshPort}";
+    }
+
+    private bool HasRdpTarget()
+    {
+        var host = !string.IsNullOrWhiteSpace(access.IpAddress) ? access.IpAddress : access.Hostname;
+        return !string.IsNullOrWhiteSpace(host);
+    }
+
+    private bool HasWebConsoleUrl()
+    {
+        var value = StoredConsoleValue();
+        return IsHttpUrl(value) || (IsGuacamoleProvider() && !string.IsNullOrWhiteSpace(value));
+    }
+
+    private bool HasEffectiveWebConsoleUrl()
+    {
+        return IsHttpUrl(EffectiveWebConsoleUrl());
+    }
+
+    private string EffectiveWebConsoleUrl()
+    {
+        if (UseGuacamoleJsonAuth())
+        {
+            var jsonAuthUrl = BuildGuacamoleJsonAuthUrl();
+            if (!string.IsNullOrWhiteSpace(jsonAuthUrl))
+            {
+                return jsonAuthUrl;
+            }
+        }
+
+        var storedValue = StoredConsoleValue();
+
+        if (!string.IsNullOrWhiteSpace(storedValue) && WebRdpPreferPerVmUrl())
+        {
+            return BuildConsoleUrlFromValue(storedValue);
+        }
+
+        if (WebRdpEnabled() && WebRdpEmbedInConsole() && !string.IsNullOrWhiteSpace(WebRdpBaseUrl()))
+        {
+            var globalUrl = BuildWebRdpUrl();
+            if (!string.IsNullOrWhiteSpace(globalUrl))
+            {
+                return globalUrl;
+            }
+        }
+
+        if (!string.IsNullOrWhiteSpace(storedValue))
+        {
+            return BuildConsoleUrlFromValue(storedValue);
+        }
+
+        return string.Empty;
+    }
+
+    private string StoredConsoleValue() => access.WebConsoleUrl?.Trim() ?? string.Empty;
+
+    private string BuildConsoleUrlFromValue(string value)
+    {
+        value = value.Trim();
+        if (IsHttpUrl(value))
+        {
+            return value;
+        }
+
+        if (IsGuacamoleProvider() && !string.IsNullOrWhiteSpace(WebRdpBaseUrl()))
+        {
+            return BuildGuacamoleUrl(value);
+        }
+
+        return string.Empty;
+    }
+
+    private string BuildWebRdpUrl()
+    {
+        if (IsGuacamoleProvider())
+        {
+            var connectionId = GuacamoleConnectionId();
+            return string.IsNullOrWhiteSpace(connectionId) ? string.Empty : BuildGuacamoleUrl(connectionId);
+        }
+
+        return BuildWebRdpUrlFromTemplate(WebRdpPathTemplate());
+    }
+
+    private string BuildGuacamoleUrl(string connectionIdOrPath)
+    {
+        var baseUrl = WebRdpBaseUrl().Trim().TrimEnd('/');
+        if (string.IsNullOrWhiteSpace(baseUrl))
+        {
+            return string.Empty;
+        }
+
+        var value = connectionIdOrPath.Trim();
+        if (IsHttpUrl(value))
+        {
+            return value;
+        }
+
+        var template = WebRdpPathTemplate();
+        if (string.IsNullOrWhiteSpace(template) || !template.Contains("{connectionId}", StringComparison.OrdinalIgnoreCase))
+        {
+            template = "/#/client/{connectionId}";
+        }
+
+        // Guacamole connection IDs are already URL-safe and may contain route separators.
+        // Preserve them exactly so copied values from /#/client/... continue to work.
+        var cleanConnectionId = value.TrimStart('/');
+        var path = template.Replace("{connectionId}", cleanConnectionId, StringComparison.OrdinalIgnoreCase);
+
+        return baseUrl + "/" + path.TrimStart('/');
+    }
+
+    private string BuildWebRdpUrlFromTemplate(string? template)
+    {
+        var baseUrl = WebRdpBaseUrl().Trim().TrimEnd('/');
+        if (string.IsNullOrWhiteSpace(baseUrl))
+        {
+            return string.Empty;
+        }
+
+        var host = !string.IsNullOrWhiteSpace(access.IpAddress) ? access.IpAddress : access.Hostname;
+        var port = access.RdpPort is null or <= 0 ? "3389" : access.RdpPort.Value.ToString();
+        var address = string.IsNullOrWhiteSpace(host) ? string.Empty : $"{host}:{port}";
+
+        if (string.IsNullOrWhiteSpace(template))
+        {
+            template = "/";
+        }
+
+        template = template
+            .Replace("{vm}", Uri.EscapeDataString(vm?.Name ?? string.Empty), StringComparison.OrdinalIgnoreCase)
+            .Replace("{host}", Uri.EscapeDataString(host ?? string.Empty), StringComparison.OrdinalIgnoreCase)
+            .Replace("{ip}", Uri.EscapeDataString(access.IpAddress ?? string.Empty), StringComparison.OrdinalIgnoreCase)
+            .Replace("{hostname}", Uri.EscapeDataString(access.Hostname ?? string.Empty), StringComparison.OrdinalIgnoreCase)
+            .Replace("{port}", Uri.EscapeDataString(port), StringComparison.OrdinalIgnoreCase)
+            .Replace("{address}", Uri.EscapeDataString(address), StringComparison.OrdinalIgnoreCase)
+            .Replace("{username}", Uri.EscapeDataString(access.Username ?? string.Empty), StringComparison.OrdinalIgnoreCase)
+            .Replace("{password}", Uri.EscapeDataString(access.Password ?? string.Empty), StringComparison.OrdinalIgnoreCase)
+            .Replace("{security}", Uri.EscapeDataString(WebRdpSecurity()), StringComparison.OrdinalIgnoreCase)
+            .Replace("{connectionId}", GuacamoleConnectionId().TrimStart('/'), StringComparison.OrdinalIgnoreCase);
+
+        if (Uri.TryCreate(template, UriKind.Absolute, out var absoluteTemplate))
+        {
+            return absoluteTemplate.ToString();
+        }
+
+        return baseUrl + "/" + template.TrimStart('/');
+    }
+
+    private string ConsoleModeText()
+    {
+        if (UseGuacamoleJsonAuth())
+        {
+            return "Embedded Guacamole auto-login console";
+        }
+
+        if (HasWebConsoleUrl() && WebRdpPreferPerVmUrl())
+        {
+            return IsGuacamoleProvider() ? "Embedded Guacamole console" : "Embedded per-VM web console URL";
+        }
+
+        if (WebRdpEnabled() && WebRdpEmbedInConsole() && !string.IsNullOrWhiteSpace(WebRdpBaseUrl()))
+        {
+            return IsGuacamoleProvider() ? "Embedded Guacamole console" : "Embedded web RDP gateway";
+        }
+
+        if (HasWebConsoleUrl())
+        {
+            return IsGuacamoleProvider() ? "Embedded Guacamole console" : "Embedded per-VM web console URL";
+        }
+
+        return "Native .RDP launcher";
+    }
+
+    private string ConsoleHelpText()
+    {
+        if (UseGuacamoleJsonAuth())
+        {
+            return "The console is using Guacamole JSON auto-login. The client does not need a separate Guacamole account or manual Guacamole login. If the console says connection does not exist, open in new tab and verify the URL contains ?data= before #/client/.";
+        }
+
+        if (HasEffectiveWebConsoleUrl())
+        {
+            return IsGuacamoleProvider()
+                ? "The console is using Guacamole. If it does not embed because of browser/cookie restrictions, press Open in new tab."
+                : "The console is using a web RDP gateway. If the iframe is blank, open it in a new tab and check gateway/reverse-proxy settings.";
+        }
+
+        return "This uses normal RDP. A browser-embedded screen requires Guacamole or another web RDP gateway outside the VM.";
+    }
+
+    private string BrowserConsoleStatus()
+    {
+        if (UseGuacamoleJsonAuth()) return "Guacamole auto-login enabled";
+        if (HasWebConsoleUrl()) return IsGuacamoleProvider() ? "Guacamole configured" : "Per-VM URL configured";
+        if (WebRdpEnabled() && !string.IsNullOrWhiteSpace(WebRdpBaseUrl()))
+        {
+            return IsGuacamoleProvider() ? "Using global Guacamole" : "Using global web RDP";
+        }
+        return "Not set";
+    }
+
+    private string ConsolePreviewText()
+    {
+        if (UseGuacamoleJsonAuth())
+        {
+            return "Guacamole JSON auto-login is enabled. PenguinPanel generates a temporary Guacamole session from this VM's saved RDP details, so the client does not need a separate Guacamole login. The per-VM Guacamole URL/connection ID box should stay empty.";
+        }
+
+        var storedValue = StoredConsoleValue();
+        if (!string.IsNullOrWhiteSpace(storedValue))
+        {
+            return $"This VM has its own {ConsoleProvider()} console value. Preview: {EffectiveWebConsoleUrl()}";
+        }
+
+        if (WebRdpEnabled() && !string.IsNullOrWhiteSpace(WebRdpBaseUrl()))
+        {
+            var preview = EffectiveWebConsoleUrl();
+            return string.IsNullOrWhiteSpace(preview)
+                ? $"Global {ConsoleProvider()} is enabled. Add a per-VM Guacamole connection URL or connection ID for this VM, or enable Guacamole JSON auto-login."
+                : $"Global {ConsoleProvider()} is enabled. Console URL preview: {preview}";
+        }
+
+        return "Guacamole is disabled. Add a per-VM Guacamole URL/connection ID or enable WebRdp in appsettings.json.";
+    }
+
+
+    private bool UseGuacamoleJsonAuth()
+    {
+        return IsGuacamoleProvider()
+            && WebRdpEnabled()
+            && WebRdpEmbedInConsole()
+            && GuacamoleJsonAuth.IsEnabled
+            && HasRdpTarget();
+    }
+
+    private string BuildGuacamoleJsonAuthUrl()
+    {
+        if (vm is null)
+        {
+            return string.Empty;
+        }
+
+        return GuacamoleJsonAuth.BuildConsoleUrl(
+            WebRdpBaseUrl(),
+            vm.Name,
+            Session.User?.Username ?? "penguinpanel",
+            access);
+    }
+
+    private bool WebRdpEnabled() => bool.TryParse(Configuration["WebRdp:Enabled"], out var enabled) && enabled;
+
+    private bool WebRdpEmbedInConsole() => !bool.TryParse(Configuration["WebRdp:EmbedInConsole"], out var embed) || embed;
+
+    private bool WebRdpPreferPerVmUrl() => !bool.TryParse(Configuration["WebRdp:PreferPerVmWebConsoleUrl"], out var prefer) || prefer;
+
+    private string WebRdpBaseUrl() => Configuration["WebRdp:BaseUrl"] ?? string.Empty;
+
+    private string WebRdpPathTemplate() => Configuration["WebRdp:PathTemplate"] ?? "/#/client/{connectionId}";
+
+    private string WebRdpSecurity() => Configuration["WebRdp:Security"] ?? "NLA";
+
+    private string ConsoleProvider() => string.IsNullOrWhiteSpace(Configuration["WebRdp:Provider"])
+        ? "Guacamole"
+        : Configuration["WebRdp:Provider"]!;
+
+    private bool IsGuacamoleProvider() => ConsoleProvider().Equals("Guacamole", StringComparison.OrdinalIgnoreCase);
+
+    private string GuacamoleConnectionId() => StoredConsoleValue();
+
+    private static bool IsHttpUrl(string? value)
+    {
+        return Uri.TryCreate(value, UriKind.Absolute, out var uri)
+            && (uri.Scheme == Uri.UriSchemeHttp || uri.Scheme == Uri.UriSchemeHttps);
+    }
+
+    private string RdpFileName()
+    {
+        var safeName = string.Join("_", (vm?.Name ?? "server").Split(Path.GetInvalidFileNameChars(), StringSplitOptions.RemoveEmptyEntries));
+        return string.IsNullOrWhiteSpace(safeName) ? "server.rdp" : $"{safeName}.rdp";
+    }
+
+    private string RdpFileContent()
+    {
+        var lines = new List<string>
+        {
+            "screen mode id:i:2",
+            "use multimon:i:0",
+            "desktopwidth:i:1920",
+            "desktopheight:i:1080",
+            "session bpp:i:32",
+            $"full address:s:{RdpText()}",
+            "prompt for credentials:i:1",
+            "authentication level:i:2",
+            "enablecredsspsupport:i:1",
+            "redirectclipboard:i:1",
+            "redirectprinters:i:0",
+            "redirectcomports:i:0",
+            "redirectsmartcards:i:1",
+            "audiomode:i:0"
+        };
+
+        if (!string.IsNullOrWhiteSpace(access.Username))
+        {
+            lines.Add($"username:s:{access.Username}");
+        }
+
+        return string.Join("\r\n", lines) + "\r\n";
+    }
+
+    private string RdpDataUri() => "data:application/x-rdp;charset=utf-8," + Uri.EscapeDataString(RdpFileContent());
+
+    private async Task CopyToClipboard(string value, string label)
+    {
+        if (string.IsNullOrWhiteSpace(value))
+        {
+            return;
+        }
+
+        try
+        {
+            await JS.InvokeVoidAsync("navigator.clipboard.writeText", value);
+            messageClass = "alert success";
+            message = $"{label} copied to clipboard.";
+        }
+        catch
+        {
+            messageClass = "alert";
+            message = $"Could not copy {label.ToLowerInvariant()} automatically. Select and copy it manually.";
+        }
+    }
+
+    private string PasswordText() => string.IsNullOrWhiteSpace(access.Password)
+        ? "Not set"
+        : showPassword ? access.Password : "••••••••••";
+
+    private string EmergencyPasswordText() => string.IsNullOrWhiteSpace(emergencyPassword)
+        ? "Not set"
+        : showEmergencyPassword ? emergencyPassword : "••••••••••";
+
+    private string EmergencyPasswordInputType => showEmergencyPassword ? "text" : "password";
+
+    private bool EmergencyResetCodeRequired => bool.TryParse(Configuration["Security:EmergencyResetRequireEmailCode"], out var value) ? value : true;
+
+    private string GuestAgentStatusText()
+    {
+        if (!guestAgentSettings.IsEnabled) return "Disabled";
+        if (!guestAgentSettings.HasToken) return "Enabled, no token";
+        return guestAgentSettings.IsOnline ? "Online" : "Enabled, waiting for check-in";
+    }
+
+    private string GuestAgentLastSeenText() => guestAgentSettings.LastSeenAt is null
+        ? "Never"
+        : guestAgentSettings.LastSeenAt.Value.ToLocalTime().ToString();
+
+    private static string ValueOrNotSet(string value) => string.IsNullOrWhiteSpace(value) ? "Not set" : value;
+
+    private bool CanManageGuestAgent() => Session.User?.IsAdmin == true;
+
+    private bool CanUseEmergencyGuestReset()
+    {
+        var user = Session.User;
+        return user is not null
+            && user.EffectivePermissions.CanViewAccess
+            && (user.IsAdmin || !user.IsSubUser);
+    }
+
+    private string ClientGuestAgentStatusText()
+    {
+        if (!guestAgentSettings.IsEnabled || !guestAgentSettings.HasToken)
+        {
+            return "Not ready - contact support";
+        }
+
+        return guestAgentSettings.IsOnline ? "Ready" : "Ready when the VM checks in";
+    }
+
+    private bool CanViewTab(string tab) => Session.User?.EffectivePermissions.CanViewTab(tab) == true;
+
+    private bool CanUsePowerActions() => Session.User?.EffectivePermissions.CanUsePowerActions == true;
+
+    private bool CanRunPowerAction(string action)
+    {
+        if (vm is null || busy || restoreInProgress || reinstallInProgress || !CanUsePowerActions())
+        {
+            return false;
+        }
+
+        return action switch
+        {
+            "start" => IsStoppedState(vm.State) || IsPausedState(vm.State),
+            "restart" => IsRunningState(vm.State),
+            "stop" => IsRunningState(vm.State) || IsPausedState(vm.State),
+            "suspend" => IsRunningState(vm.State),
+            "resume" => IsPausedState(vm.State),
+            _ => false
+        };
+    }
+
+    private string PowerActionTitle(string action)
+    {
+        if (restoreInProgress) return "A checkpoint restore is in progress.";
+        if (reinstallInProgress) return "A reinstall is in progress.";
+        if (busy) return "Another action is already running.";
+        if (!CanUsePowerActions()) return "Power controls are disabled for your account.";
+
+        return action switch
+        {
+            "start" when !CanRunPowerAction(action) => "The VM is already running, so Start is disabled.",
+            "restart" when !CanRunPowerAction(action) => "Restart is only available while the VM is running.",
+            "stop" when !CanRunPowerAction(action) => "Stop is only available while the VM is running or paused.",
+            "suspend" when !CanRunPowerAction(action) => "Pause is only available while the VM is running.",
+            "resume" when !CanRunPowerAction(action) => "Resume is only available while the VM is paused or saved.",
+            _ => string.Empty
+        };
+    }
+
+    private VmTemplate? SelectedReinstallTemplate => templates.FirstOrDefault(template => template.Id == selectedTemplateId);
+
+    private string TemplateClientNote(long templateId)
+    {
+        var note = templates.FirstOrDefault(template => template.Id == templateId)?.Notes?.Trim() ?? string.Empty;
+        return note;
+    }
+
+    private string RestoreProgressStyle => $"width: {Math.Clamp(restoreProgress, 0, 100)}%;";
+
+    private string ReinstallProgressStyle => $"width: {Math.Clamp(reinstallProgress, 0, 100)}%;";
+
+    private IEnumerable<string> AllowedTabs()
+    {
+        string[] tabs = ["console", "resources", "access", "recovery", "network", "firewall", "backups", "reinstall", "activity", "settings"];
+        return tabs.Where(CanViewTab);
+    }
+
+    private void EnsureAllowedActiveTab()
+    {
+        if (!CanViewTab(activeTab))
+        {
+            activeTab = AllowedTabs().FirstOrDefault() ?? "console";
+        }
+    }
+
+    private static string TabDisplayName(string tab) => tab switch
+    {
+        "console" => "Console",
+        "resources" => "Resources",
+        "access" => "Access",
+        "recovery" => "Password Reset",
+        "network" => "Network",
+        "firewall" => "Windows Firewall",
+        "backups" => "Backups",
+        "reinstall" => "Reinstall",
+        "activity" => "Activity",
+        "settings" => "Settings",
+        _ => "section"
+    };
+
+    private string TabClass(string tab) => activeTab == tab ? "server-tab active" : "server-tab";
+
+    private static bool IsPowerButtonAction(string action) => action is "start" or "stop" or "restart" or "suspend" or "resume";
+
+    private string PowerProgressStyle => $"width: {Math.Clamp(powerProgress, 0, 100)}%;";
+
+    private string PowerProgressTitle() => string.IsNullOrWhiteSpace(powerAction)
+        ? "Working"
+        : $"{ActionName(powerAction)} in progress";
+
+    private static string ActionVerb(string action) => action switch
+    {
+        "start" => "start",
+        "stop" => "stop",
+        "restart" => "restart",
+        "suspend" => "pause",
+        "resume" => "resume",
+        _ => "update"
+    };
+
+    private static string ActionName(string action) => action switch
+    {
+        "start" => "Start",
+        "stop" => "Stop",
+        "restart" => "Restart",
+        "suspend" => "Pause",
+        "resume" => "Resume",
+        "disconnect" => "Disconnect network",
+        _ => action
+    };
+
+
+    private static bool IsConsoleAvailableState(string? state)
+    {
+        if (string.IsNullOrWhiteSpace(state)) return false;
+        return state.Equals("2", StringComparison.OrdinalIgnoreCase)
+            || state.Equals("Running", StringComparison.OrdinalIgnoreCase)
+            || state.Contains("Running", StringComparison.OrdinalIgnoreCase);
+    }
+
+    private static bool IsRunningState(string? state)
+    {
+        if (string.IsNullOrWhiteSpace(state)) return false;
+        return state.Contains("Running", StringComparison.OrdinalIgnoreCase)
+            || state.Contains("Starting", StringComparison.OrdinalIgnoreCase)
+            || state.Contains("Resuming", StringComparison.OrdinalIgnoreCase)
+            || state == "2";
+    }
+
+    private static bool IsStoppedState(string? state)
+    {
+        if (string.IsNullOrWhiteSpace(state)) return false;
+        return state.Contains("Off", StringComparison.OrdinalIgnoreCase)
+            || state.Contains("Stopped", StringComparison.OrdinalIgnoreCase)
+            || state == "3";
+    }
+
+    private static bool IsPausedState(string? state)
+    {
+        if (string.IsNullOrWhiteSpace(state)) return false;
+        return state.Contains("Paused", StringComparison.OrdinalIgnoreCase)
+            || state.Contains("Saved", StringComparison.OrdinalIgnoreCase)
+            || state.Contains("Suspended", StringComparison.OrdinalIgnoreCase);
+    }
+
+    private static string StateClass(string state)
+    {
+        if (state.Contains("Running", StringComparison.OrdinalIgnoreCase) || state == "2") return "online";
+        if (state.Contains("Off", StringComparison.OrdinalIgnoreCase) || state.Contains("Stopped", StringComparison.OrdinalIgnoreCase) || state == "3") return "offline";
+        return "warning";
+    }
+
+    private static string PrettyState(string state) => state switch
+    {
+        "2" => "Running",
+        "3" => "Off",
+        "32768" => "Paused",
+        "32769" => "Suspended",
+        _ => state
+    };
+
+    private static int Clamp(int value) => Math.Max(0, Math.Min(100, value));
+
+    private static int MemoryBarPercent(long bytes)
+    {
+        if (bytes <= 0) return 0;
+        var gb = bytes / 1024d / 1024d / 1024d;
+        return Math.Max(8, Math.Min(100, (int)Math.Round(gb * 12.5)));
+    }
+
+    private static string FormatUptime(TimeSpan value) => value == TimeSpan.Zero ? "-" : $"{(int)value.TotalDays}d {value.Hours}h {value.Minutes}m";
+
+    private static string FormatBytes(long bytes)
+    {
+        if (bytes <= 0) return "0 B";
+        string[] units = ["B", "KB", "MB", "GB", "TB"];
+        var value = (double)bytes;
+        var unit = 0;
+        while (value >= 1024 && unit < units.Length - 1)
+        {
+            value /= 1024;
+            unit++;
+        }
+
+        return $"{value:0.#} {units[unit]}";
+    }
+
+    private void OnSessionChanged()
+    {
+        _ = InvokeAsync(async () =>
+        {
+            if (Session.IsLoggedIn && !string.IsNullOrWhiteSpace(VmName))
+            {
+                await Load();
+            }
+
+            StateHasChanged();
+        });
+    }
+
+    public void Dispose()
+    {
+        Session.Changed -= OnSessionChanged;
+    }
+}

@@ -1,0 +1,427 @@
+@page "/abuse"
+@implements IDisposable
+@inject PanelService Panel
+@inject UserSession Session
+@inject AbuseMonitorService Monitor
+
+<PageTitle>Abuse Protection</PageTitle>
+
+@if (!Session.IsLoggedIn)
+{
+    <NotSignedIn />
+}
+else if (!Session.User!.IsAdmin)
+{
+    <section class="panel empty-state">
+        <h1>Admin only</h1>
+        <p>Only admins can use abuse protection controls.</p>
+    </section>
+}
+else
+{
+    <div class="page-head">
+        <div>
+            <h1>Abuse Protection</h1>
+            <p>Detect sustained outbound flood traffic from VM resource metering.</p>
+        </div>
+        <button class="button" @onclick="Load">Refresh</button>
+    </div>
+
+    @if (!string.IsNullOrWhiteSpace(message))
+    {
+        <div class="alert success">@message</div>
+    }
+
+    @if (!string.IsNullOrWhiteSpace(error))
+    {
+        <div class="alert">@error</div>
+    }
+
+    <section class="panel form-grid">
+        <label class="switch-row">
+            <input type="checkbox" @bind="config.Enabled" />
+            Detection enabled
+        </label>
+        <label class="switch-row">
+            <input type="checkbox" @bind="config.AutoScanEnabled" />
+            Automatic scanning enabled
+        </label>
+        <label class="switch-row">
+            <input type="checkbox" @bind="config.AutoDisconnect" />
+            Auto disconnect network
+        </label>
+        <label class="switch-row">
+            <input type="checkbox" @bind="config.AutoSuspend" />
+            Auto suspend VM
+        </label>
+        <label>
+            Suspicious outbound threshold Mbps
+            <input type="number" min="1" step="1" @bind="config.OutboundThresholdMbps" />
+        </label>
+        <label>
+            High severity threshold Mbps
+            <input type="number" min="1" step="1" @bind="config.SustainedThresholdMbps" />
+        </label>
+        <label>
+            Scan interval seconds
+            <input type="number" min="10" max="3600" step="5" @bind="config.ScanIntervalSeconds" />
+        </label>
+        <label>
+            Bad scans before action
+            <input type="number" min="1" max="20" step="1" @bind="config.RequiredConsecutiveDetections" />
+        </label>
+        <label>
+            Action cooldown minutes
+            <input type="number" min="1" max="1440" step="1" @bind="config.CooldownMinutes" />
+        </label>
+        <div class="hint-card">
+            The monitor now waits for repeated bad scans before disconnecting or suspending a VM. This is better for catching DDoS and ping flood tools without punishing short normal traffic spikes.
+        </div>
+        <button class="button primary" @onclick="Save">Save protection settings</button>
+    </section>
+
+    <section class="panel">
+        <div class="panel-head">
+            <h2>Automatic monitor status</h2>
+            <span>@(monitorStatus.IsRunning ? "Running" : "Stopped")</span>
+        </div>
+        <div class="info-grid">
+            <div>
+                <span>Last loop</span>
+                <strong>@FormatDate(monitorStatus.LastLoopAt)</strong>
+            </div>
+            <div>
+                <span>Last scan</span>
+                <strong>@FormatDate(monitorStatus.LastScanAt)</strong>
+            </div>
+            <div>
+                <span>Started</span>
+                <strong>@FormatDate(monitorStatus.StartedAt)</strong>
+            </div>
+        </div>
+        <div class="hint-card">@monitorStatus.LastMessage</div>
+        <div class="inline-form" style="margin-top: 1rem;">
+            <button class="button" @onclick="RunAutoScanNow">Run automatic scan now</button>
+            <button class="button" @onclick="RefreshMonitorStatus">Refresh monitor status</button>
+        </div>
+        @if (monitorStatus.VmStatuses.Count > 0)
+        {
+            <table class="data-table compact-table">
+                <thead>
+                    <tr>
+                        <th>VM</th>
+                        <th>Last auto scan</th>
+                        <th>Outbound</th>
+                        <th>Detected</th>
+                        <th>Result</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    @foreach (var item in monitorStatus.VmStatuses)
+                    {
+                        <tr>
+                            <td>@item.VmName</td>
+                            <td>@item.LastScanAt.ToLocalTime()</td>
+                            <td>@item.OutboundMbps.ToString("0.###") Mbps</td>
+                            <td>@(item.Detected ? "Yes" : "No")</td>
+                            <td>@item.Result</td>
+                        </tr>
+                    }
+                </tbody>
+            </table>
+        }
+    </section>
+
+    <section class="panel">
+        <div class="panel-head">
+            <h2>Manual VM scan</h2>
+        </div>
+        <div class="inline-form">
+            <select @bind="selectedVm">
+                <option value="">Select VM</option>
+                @foreach (var vm in vms)
+                {
+                    <option value="@vm.Name">@vm.Name</option>
+                }
+            </select>
+            <button class="button" @onclick="Scan" disabled="@string.IsNullOrWhiteSpace(selectedVm)">Scan outbound traffic</button>
+            <button class="button danger" @onclick="Disconnect" disabled="@string.IsNullOrWhiteSpace(selectedVm)">Disconnect network</button>
+        </div>
+    </section>
+
+    <section class="panel">
+        <div class="panel-head">
+            <div>
+                <h2>Event cleanup</h2>
+                <p>Delete old abuse events and meter samples so the database does not grow forever.</p>
+            </div>
+        </div>
+        <div class="inline-form">
+            <label class="inline-label">
+                Delete data older than days
+                <input type="number" min="1" max="3650" step="1" @bind="cleanupOlderThanDays" />
+            </label>
+            <button class="button" @onclick="DeleteOldData">Delete old data</button>
+            <button class="button danger" @onclick="ClearAllEvents">Clear all events</button>
+        </div>
+        <div class="hint-card" style="margin-top: 1rem;">
+            Old data cleanup removes abuse events and bandwidth meter samples older than the selected number of days. Clear all events only clears the visible abuse event list.
+        </div>
+    </section>
+
+    <section class="panel">
+        <div class="panel-head">
+            <h2>Events</h2>
+        </div>
+        <table class="data-table">
+            <thead>
+                <tr>
+                    <th>Time</th>
+                    <th>VM</th>
+                    <th>Severity</th>
+                    <th>Outbound</th>
+                    <th>Action</th>
+                    <th>Controls</th>
+                </tr>
+            </thead>
+            <tbody>
+                @foreach (var item in events)
+                {
+                    <tr>
+                        <td>@item.CreatedAt.ToLocalTime()</td>
+                        <td>@item.VmName</td>
+                        <td><span class="pill danger-pill">@item.Severity</span></td>
+                        <td>@item.OutboundMbps.ToString("0.###") Mbps</td>
+                        <td>@item.ActionTaken</td>
+                        <td>
+                            <div class="table-actions">
+                                <button class="button tiny" @onclick='() => TakeEventAction(item.VmName, "disconnect")'>Disconnect</button>
+                                <button class="button tiny danger" @onclick='() => TakeEventAction(item.VmName, "suspend")'>Suspend</button>
+                                <button class="button tiny" @onclick='() => TakeEventAction(item.VmName, "resume")'>Resume</button>
+                                <button class="button tiny danger" @onclick="() => DeleteEvent(item.Id)">Delete</button>
+                            </div>
+                        </td>
+                    </tr>
+                }
+            </tbody>
+        </table>
+    </section>
+}
+
+@code {
+    private AbuseConfig config = new(true, false, false, 50, 100, false, 30, 10, 3);
+    private IReadOnlyList<VmInfo> vms = [];
+    private IReadOnlyList<AbuseEvent> events = [];
+    private AbuseMonitorRuntimeStatus monitorStatus = new(false, null, null, null, "Automatic monitor status has not been loaded yet.", []);
+    private string selectedVm = "";
+    private int cleanupOlderThanDays = 7;
+    private string? message;
+    private string? error;
+    private CancellationTokenSource? refreshCts;
+    private Task? refreshTask;
+
+    protected override async Task OnInitializedAsync()
+    {
+        Session.Changed += OnSessionChanged;
+
+        if (Session.IsLoggedIn && Session.User!.IsAdmin)
+        {
+            await Load();
+        }
+
+        refreshCts = new CancellationTokenSource();
+        refreshTask = AutoRefreshMonitorAsync(refreshCts.Token);
+    }
+
+    private async Task Load()
+    {
+        error = null;
+        try
+        {
+            config = await Panel.GetAbuseConfigAsync();
+            vms = await Panel.GetVmsAsync(Session.User);
+            events = await Panel.GetAbuseEventsAsync();
+            monitorStatus = Monitor.GetStatus();
+        }
+        catch (Exception ex)
+        {
+            error = $"Could not load abuse protection settings: {ex.Message}";
+        }
+    }
+
+    private async Task Save()
+    {
+        error = null;
+        try
+        {
+            await Panel.SaveAbuseConfigAsync(config);
+            Monitor.RequestImmediateScan();
+            monitorStatus = Monitor.GetStatus();
+            message = "Protection settings saved. Automatic monitor was asked to scan now.";
+        }
+        catch (Exception ex)
+        {
+            error = ex.Message;
+        }
+    }
+
+    private async Task Scan()
+    {
+        error = null;
+        try
+        {
+            message = await Panel.ScanVmForOutboundAbuseAsync(Session.User, selectedVm);
+            events = await Panel.GetAbuseEventsAsync();
+            monitorStatus = Monitor.GetStatus();
+        }
+        catch (Exception ex)
+        {
+            error = ex.Message;
+        }
+    }
+
+    private async Task Disconnect()
+    {
+        error = null;
+        try
+        {
+            await Panel.VmActionAsync(Session.User, "disconnect", selectedVm);
+            message = $"Network disconnected for {selectedVm}.";
+        }
+        catch (Exception ex)
+        {
+            error = ex.Message;
+        }
+    }
+
+    private async Task TakeEventAction(string vmName, string action)
+    {
+        error = null;
+        try
+        {
+            await Panel.VmActionAsync(Session.User, action, vmName);
+            message = action switch
+            {
+                "disconnect" => $"Network disconnected for {vmName}.",
+                "suspend" => $"VM {vmName} suspended.",
+                "resume" => $"VM {vmName} resumed.",
+                _ => $"Action {action} completed for {vmName}."
+            };
+            vms = await Panel.GetVmsAsync(Session.User);
+            events = await Panel.GetAbuseEventsAsync();
+            monitorStatus = Monitor.GetStatus();
+        }
+        catch (Exception ex)
+        {
+            error = ex.Message;
+        }
+    }
+
+    private async Task DeleteEvent(long eventId)
+    {
+        error = null;
+        try
+        {
+            await Panel.DeleteAbuseEventAsync(Session.User, eventId);
+            events = await Panel.GetAbuseEventsAsync();
+            message = $"Deleted abuse event #{eventId}.";
+        }
+        catch (Exception ex)
+        {
+            error = ex.Message;
+        }
+    }
+
+    private async Task DeleteOldData()
+    {
+        error = null;
+        try
+        {
+            var result = await Panel.DeleteOldAbuseDataAsync(Session.User, cleanupOlderThanDays);
+            events = await Panel.GetAbuseEventsAsync();
+            message = $"Deleted {result.EventsDeleted} old abuse event(s) and {result.SamplesDeleted} old meter sample(s).";
+        }
+        catch (Exception ex)
+        {
+            error = ex.Message;
+        }
+    }
+
+    private async Task ClearAllEvents()
+    {
+        error = null;
+        try
+        {
+            var deleted = await Panel.ClearAbuseEventsAsync(Session.User);
+            events = await Panel.GetAbuseEventsAsync();
+            message = $"Cleared {deleted} abuse event(s). Meter samples were kept.";
+        }
+        catch (Exception ex)
+        {
+            error = ex.Message;
+        }
+    }
+
+    private async Task RunAutoScanNow()
+    {
+        Monitor.RequestImmediateScan();
+        message = "Automatic monitor was asked to scan now. Wait a few seconds and refresh/status will update.";
+        await Task.Delay(1500);
+        await RefreshMonitorStatus();
+    }
+
+    private async Task RefreshMonitorStatus()
+    {
+        monitorStatus = Monitor.GetStatus();
+        events = await Panel.GetAbuseEventsAsync();
+        await InvokeAsync(StateHasChanged);
+    }
+
+    private async Task AutoRefreshMonitorAsync(CancellationToken token)
+    {
+        try
+        {
+            using var timer = new PeriodicTimer(TimeSpan.FromSeconds(5));
+            while (await timer.WaitForNextTickAsync(token))
+            {
+                if (Session.IsLoggedIn && Session.User?.IsAdmin == true)
+                {
+                    monitorStatus = Monitor.GetStatus();
+                    events = await Panel.GetAbuseEventsAsync();
+                    await InvokeAsync(StateHasChanged);
+                }
+            }
+        }
+        catch (OperationCanceledException)
+        {
+            // Page closed.
+        }
+        catch
+        {
+            // Keep UI refresh failures from breaking the page.
+        }
+    }
+
+    private void OnSessionChanged()
+    {
+        _ = InvokeAsync(async () =>
+        {
+            if (Session.IsLoggedIn && Session.User!.IsAdmin)
+            {
+                await Load();
+            }
+
+            StateHasChanged();
+        });
+    }
+
+    private static string FormatDate(DateTime? value) => value is null ? "Never" : value.Value.ToLocalTime().ToString("yyyy-MM-dd HH:mm:ss");
+
+    public void Dispose()
+    {
+        refreshCts?.Cancel();
+        refreshCts?.Dispose();
+        Session.Changed -= OnSessionChanged;
+    }
+
+}

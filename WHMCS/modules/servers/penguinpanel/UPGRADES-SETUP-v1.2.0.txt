@@ -1,0 +1,66 @@
+PenguinPanel WHMCS Server Module v1.2.0
+=========================================
+
+NEW
+---
+- Implements penguinpanel_ChangePackage().
+- Paid WHMCS product/configurable-option upgrades now call:
+  POST /api/whmcs/vps/{serviceId}/resize
+- CPU and RAM can move up or down.
+- Disk can grow only; shrinking is rejected for safety.
+- Client area now shows vCPU, RAM and disk.
+- Client area includes:
+  * Uppgradera / nedgradera VPS
+  * Öppna supportärende
+  * Open PenguinPanel
+- Successful Create/ChangePackage operations save the actual resource allocation as service properties.
+
+WHMCS SETUP
+-----------
+Recommended design: ONE VPS product with Configurable Options.
+
+1. Configuration / System Settings / Configurable Options
+2. Create a group such as:
+   PenguinPanel VPS Resources
+3. Assign it to your VPS product.
+4. Add configurable options with these exact machine names:
+
+   CPU Cores
+     Example dropdown values:
+       2|2 vCPU
+       4|4 vCPU
+       6|6 vCPU
+       8|8 vCPU
+
+   RAM
+     Example dropdown values:
+       4096MB|4 GB RAM
+       8192MB|8 GB RAM
+       16384MB|16 GB RAM
+       32768MB|32 GB RAM
+
+   Disk GB
+     Example dropdown values:
+       128|128 GB
+       256|256 GB
+       512|512 GB
+
+5. Enter the extra price for each selection/billing cycle in WHMCS.
+6. Product -> Upgrades:
+   Enable Configurable Options upgrades.
+7. Keep the PenguinPanel server module and server group assigned.
+
+WHMCS will calculate/prorate the upgrade invoice. After payment it calls ChangePackage, and PenguinPanel changes the VM resources.
+
+IMPORTANT DISK RULE
+-------------------
+Do not offer a paid downgrade to a smaller disk. Hyper-V disk expansion is supported, but safe automatic VHD/VHDX shrinking is intentionally not implemented. CPU/RAM downgrades are supported.
+
+PRODUCT DURATION NOTE
+---------------------
+WHMCS natively provides recurring cycles such as Monthly, Quarterly, Semi-Annually, Annually, Biennially and Triennially.
+It does not natively provide recurring every-2-month, every-4-month or every-5-month cycles.
+
+For VPS products, one product with normal WHMCS billing cycles + resource configurable options is safer than making separate 1/2/3/4/5-month products.
+
+If exact fixed 2/4/5-month prepaid products are required, build that as a separate fixed-term feature with explicit expiry/renewal automation. Do not fake those periods with the normal Monthly cycle.

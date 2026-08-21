@@ -1,0 +1,38 @@
+# Build output
+**/bin/
+**/obj/
+**/.vs/
+**/*.user
+**/*.suo
+
+# Production secrets/config
+**/appsettings.json
+**/appsettings.Production.json
+**/appsettings.Local.json
+**/.env
+**/*.pfx
+**/*.p12
+**/*.pem
+**/*.key
+
+# Databases / private exports
+**/backup.sql
+**/*.sqlite
+**/*.sqlite3
+**/*.db
+**/private-backup/
+
+# Logs/runtime
+**/*.log
+**/logs/
+**/temp/
+**/tmp/
+
+# VM disks/templates - never commit these to GitHub
+**/*.vhd
+**/*.vhdx
+**/*.avhd
+**/*.avhdx
+
+# Keep safe examples
+!**/appsettings.example.json

@@ -1,0 +1,166 @@
+@page "/settings"
+@implements IDisposable
+@inject UserSession Session
+@inject IConfiguration Configuration
+@inject PanelService Panel
+
+<PageTitle>Settings</PageTitle>
+
+@if (!Session.IsLoggedIn)
+{
+    <NotSignedIn />
+}
+else if (!Session.User!.IsAdmin)
+{
+    <section class="panel empty-state">
+        <h1>Admin only</h1>
+        <p>Only admins can view panel settings.</p>
+    </section>
+}
+else
+{
+    <div class="page-head">
+        <div>
+            <h1>Settings</h1>
+            <p>Current modules, email delivery, Guacamole, and local defaults.</p>
+        </div>
+    </div>
+
+    @if (!string.IsNullOrWhiteSpace(message))
+    {
+        <div class="@messageClass">@message</div>
+    }
+
+    <div class="settings-dashboard">
+        <section class="panel settings-card smtp-test-card">
+            <div class="panel-head">
+                <div>
+                    <h2>SMTP test</h2>
+                    <p class="muted">Send a real test email before creating clients.</p>
+                </div>
+                <span class="@SmtpStatusPillClass()">@SmtpStatusLabel()</span>
+            </div>
+            <div class="settings-mini-grid">
+                <div><span>Host</span><strong>@SmtpHost()</strong></div>
+                <div><span>Sender</span><strong>@SmtpFrom()</strong></div>
+                <div><span>Timeout</span><strong>@SmtpTimeout()</strong></div>
+            </div>
+            <label>
+                Send test to
+                <div class="inline-edit stacked-inline-edit">
+                    <input type="email" @bind="testEmail" placeholder="you@example.com" autocomplete="off" />
+                    <button type="button" class="button primary" @onclick="SendSmtpTest" disabled="@(busy || string.IsNullOrWhiteSpace(testEmail))">@(busy ? "Sending..." : "Send test email")</button>
+                </div>
+            </label>
+            <p class="muted">If the test hangs or fails, PenguinPanel now times out instead of getting stuck while creating a user.</p>
+        </section>
+
+        <section class="panel settings-card settings-list">
+            <div><span>Stack</span><strong>ASP.NET Core Blazor Server</strong></div>
+            <div><span>Database</span><strong>SQLite local panel database</strong></div>
+            <div><span>Users</span><strong>Admins see all VMs, users only see assigned VMs</strong></div>
+            <div><span>Permission enforcement</span><strong>Backend checked before list, view, actions, backups, and access details</strong></div>
+            <div><span>Virtualization control</span><strong>Local PowerShell Hyper-V module</strong></div>
+            <div><span>Access details</span><strong>RDP/SSH/IP credentials are configured per VM on the server page</strong></div>
+            <div><span>Templates</span><strong>Global template manager is available from OS Templates</strong></div>
+            <div><span>Backups</span><strong>Restore points are inside each virtual server's Backups tab</strong></div>
+            <div><span>Email notifications</span><strong>@SmtpStatus()</strong></div>
+            <div><span>Web RDP</span><strong>@WebRdpStatus()</strong></div>
+            <div><span>Guacamole URL</span><strong>@WebRdpUrl()</strong></div>
+            <div><span>Guacamole path/template</span><strong>@WebRdpPath()</strong></div>
+            <div><span>First login</span><strong>Configured privately in appsettings.json</strong></div>
+        </section>
+    </div>
+}
+
+@code {
+    private string testEmail = "";
+    private string? message;
+    private string messageClass = "alert success";
+    private bool busy;
+
+    private string SmtpStatus()
+    {
+        var enabled = bool.TryParse(Configuration["Smtp:Enabled"], out var value) && value;
+        return enabled ? "Enabled - user passwords and notifications can be emailed" : "Disabled - emails will not be sent";
+    }
+
+    private string SmtpHost() => string.IsNullOrWhiteSpace(Configuration["Smtp:Host"])
+        ? "Not set"
+        : $"{Configuration["Smtp:Host"]}:{Configuration["Smtp:Port"] ?? "587"}";
+
+    private string SmtpFrom() => string.IsNullOrWhiteSpace(Configuration["Smtp:FromEmail"])
+        ? "Not set"
+        : Configuration["Smtp:FromEmail"]!;
+
+    private string WebRdpStatus()
+    {
+        var enabled = bool.TryParse(Configuration["WebRdp:Enabled"], out var value) && value;
+        return enabled ? $"Enabled - embedded {WebRdpProvider()} console" : "Disabled - .RDP launcher fallback";
+    }
+
+    private string WebRdpProvider() => string.IsNullOrWhiteSpace(Configuration["WebRdp:Provider"])
+        ? "Web RDP"
+        : Configuration["WebRdp:Provider"]!;
+
+    private string WebRdpUrl() => string.IsNullOrWhiteSpace(Configuration["WebRdp:BaseUrl"])
+        ? "Not set"
+        : Configuration["WebRdp:BaseUrl"]!;
+
+    private string WebRdpPath() => string.IsNullOrWhiteSpace(Configuration["WebRdp:PathTemplate"])
+        ? "/"
+        : Configuration["WebRdp:PathTemplate"]!;
+
+
+    private string SmtpTimeout() => $"{Configuration["Smtp:TimeoutSeconds"] ?? "15"} seconds";
+
+    private string SmtpStatusLabel()
+    {
+        var enabled = bool.TryParse(Configuration["Smtp:Enabled"], out var value) && value;
+        return enabled ? "SMTP enabled" : "SMTP disabled";
+    }
+
+    private string SmtpStatusPillClass()
+    {
+        var enabled = bool.TryParse(Configuration["Smtp:Enabled"], out var value) && value;
+        return enabled ? "pill online" : "pill warning-pill";
+    }
+
+    private async Task SendSmtpTest()
+    {
+        busy = true;
+        messageClass = "alert info";
+        message = $"Sending SMTP test to {testEmail.Trim()}...";
+
+        try
+        {
+            await Panel.TestSmtpAsync(Session.User, testEmail);
+            messageClass = "alert success";
+            message = $"SMTP test sent to {testEmail.Trim()}. Check that inbox and spam folder.";
+        }
+        catch (Exception ex)
+        {
+            messageClass = "alert";
+            message = ex.Message;
+        }
+        finally
+        {
+            busy = false;
+        }
+    }
+
+    protected override void OnInitialized()
+    {
+        Session.Changed += OnSessionChanged;
+    }
+
+    private void OnSessionChanged()
+    {
+        _ = InvokeAsync(StateHasChanged);
+    }
+
+    public void Dispose()
+    {
+        Session.Changed -= OnSessionChanged;
+    }
+}

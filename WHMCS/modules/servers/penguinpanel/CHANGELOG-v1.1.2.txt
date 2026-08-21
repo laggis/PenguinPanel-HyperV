@@ -1,0 +1,9 @@
+PenguinPanel WHMCS Server Module v1.1.2
+
+Fixes:
+- Removed the unsafe default OS Template ID of 1.
+- CreateAccount now validates the selected template against /api/whmcs/catalog.
+- If exactly one enabled PenguinPanel template exists, stale/blank old product settings safely resolve to that template.
+- If multiple templates exist and the selection is invalid, WHMCS shows the available template names/IDs instead of a generic provisioning failure.
+
+After upload, revisit Product > Module Settings and use the OS Template loader/refresh to save the intended template for each product.

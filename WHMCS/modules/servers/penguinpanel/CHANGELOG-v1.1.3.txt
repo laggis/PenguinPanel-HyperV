@@ -1,0 +1,6 @@
+PenguinPanel WHMCS Server Module v1.1.3
+
+- Clarifies that FiveM Internal Port is the port inside the VPS (normally 30120).
+- Recommends Public RDP Port = 0 for automatic allocation.
+- Recommends Public FiveM Port = 0 for automatic allocation.
+- Includes the same template validation behavior introduced in v1.1.2.

@@ -1,0 +1,290 @@
+@page "/vms"
+@implements IDisposable
+@inject PanelService Panel
+@inject UserSession Session
+@inject IJSRuntime JS
+
+<PageTitle>Virtual Servers</PageTitle>
+
+@if (!Session.IsLoggedIn)
+{
+    <NotSignedIn />
+}
+else
+{
+    <div class="page-head">
+        <div>
+            <h1>Virtual Servers</h1>
+            <p>@(Session.User!.IsAdmin ? "Penguin-powered controls for your virtual servers." : "Only virtual servers assigned to your account are shown here.")</p>
+        </div>
+        <div class="button-row">
+            @if (Session.User!.IsAdmin)
+            {
+                <a class="button primary" href="users">User Manager</a>
+            }
+            <button class="button" @onclick="Load">Refresh</button>
+        </div>
+    </div>
+
+    @if (!string.IsNullOrWhiteSpace(message))
+    {
+        <div class="@messageClass">@message</div>
+    }
+
+    @if (Session.User!.IsAdmin)
+    {
+        <section class="panel form-grid">
+            <div class="panel-head full-row">
+                <h2>Quick VM assignment</h2>
+                <span class="muted">Assign a virtual server to a panel user</span>
+            </div>
+            <label>
+                User
+                <select @bind="assignUserId">
+                    <option value="0">Select user</option>
+                    @foreach (var user in users)
+                    {
+                        <option value="@user.Id">@user.Username (@user.Role)</option>
+                    }
+                </select>
+            </label>
+            <label>
+                VM
+                <select @bind="assignVm">
+                    <option value="">Select VM</option>
+                    @foreach (var vmItem in vms)
+                    {
+                        <option value="@vmItem.Name">@vmItem.Name</option>
+                    }
+                </select>
+            </label>
+            <div class="form-actions full-row">
+                <button type="button" class="button primary" @onclick="AssignVm" disabled="@(assignUserId == 0 || string.IsNullOrWhiteSpace(assignVm))">Assign selected VM</button>
+            </div>
+        </section>
+    }
+
+    <section class="panel">
+        @if (vms.Count == 0)
+        {
+            <div class="friendly-empty-state">
+                <div class="empty-illustration">☁</div>
+                <div>
+                    <h2>@(Session.User!.IsAdmin ? "No virtual servers yet" : "No server assigned yet")</h2>
+                    <p>@(Session.User!.IsAdmin ? "Your virtual servers will appear here as soon as they are available. Click refresh to check again, or open User Manager to manage assignments." : "Your virtual server will appear here as soon as it is ready for your account. Click refresh to check again, or contact support if you expected to see one already.")</p>
+                    <div class="button-row empty-actions">
+                        <button class="button primary" @onclick="Load">Refresh servers</button>
+                        @if (Session.User!.IsAdmin)
+                        {
+                            <a class="button" href="users">Open User Manager</a>
+                        }
+                    </div>
+                </div>
+            </div>
+        }
+        else
+        {
+            <table class="data-table">
+                <thead>
+                    <tr>
+                        <th>Server</th>
+                        <th>State</th>
+                        <th>CPU</th>
+                        <th>Memory</th>
+                        <th>Uptime</th>
+                        <th class="actions-col">Actions</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    @foreach (var vm in vms)
+                    {
+                        <tr>
+                            <td><a class="server-link" href="@ServerHref(vm.Name)">@vm.Name</a></td>
+                            <td><span class="pill">@vm.State</span></td>
+                            <td>@vm.CpuUsage%</td>
+                            <td>@FormatBytes(vm.MemoryAssigned)</td>
+                            <td>@FormatUptime(vm.Uptime)</td>
+                            <td class="button-row">
+                                <a class="button mini primary" href="@ServerHref(vm.Name)">Manage</a>
+                                @if (CanUsePowerActions())
+                                {
+                                    <button title="Start" @onclick='() => Run("start", vm.Name)'>Start</button>
+                                    <button title="Stop" class="danger" @onclick='() => Run("stop", vm.Name)'>Stop</button>
+                                    <button title="Restart" @onclick='() => Run("restart", vm.Name)'>Restart</button>
+                                }
+                                @if (Session.User!.IsAdmin)
+                                {
+                                    <button title="Permanently delete VPS" class="danger" @onclick="() => DeleteVm(vm.Name)" disabled="@(deleteBusy)">@(deletingVm == vm.Name ? "Deleting..." : "Delete VPS")</button>
+                                }
+                            </td>
+                        </tr>
+                    }
+                </tbody>
+            </table>
+        }
+    </section>
+}
+
+@code {
+    private IReadOnlyList<VmInfo> vms = [];
+    private IReadOnlyList<PanelUserSummary> users = [];
+    private long assignUserId;
+    private string assignVm = "";
+    private bool deleteBusy;
+    private string deletingVm = "";
+
+    private static string ServerHref(string vmName) => $"server?vm={Uri.EscapeDataString(vmName)}";
+    private string? message;
+    private string messageClass = "alert success";
+
+    protected override async Task OnInitializedAsync()
+    {
+        Session.Changed += OnSessionChanged;
+
+        if (Session.IsLoggedIn)
+        {
+            await Load();
+        }
+    }
+
+    private async Task Load()
+    {
+        message = null;
+        vms = await Panel.GetVmsAsync(Session.User);
+        if (Session.User?.IsAdmin == true)
+        {
+            users = await Panel.GetUsersAsync(Session.User);
+            if (assignUserId == 0)
+            {
+                assignUserId = users.FirstOrDefault(user => !user.Username.Equals("admin", StringComparison.OrdinalIgnoreCase))?.Id
+                    ?? users.FirstOrDefault()?.Id
+                    ?? 0;
+            }
+        }
+    }
+
+    private bool CanUsePowerActions() => Session.User?.EffectivePermissions.CanUsePowerActions == true;
+
+    private async Task Run(string action, string vmName)
+    {
+        if (!CanUsePowerActions())
+        {
+            messageClass = "alert";
+            message = "Power controls are not enabled for your account.";
+            return;
+        }
+
+        try
+        {
+            await Panel.VmActionAsync(Session.User, action, vmName);
+            messageClass = "alert success";
+            message = $"{action} sent to {vmName}.";
+            await Load();
+            message = $"{action} sent to {vmName}.";
+        }
+        catch (Exception ex)
+        {
+            messageClass = "alert";
+            message = ex.Message;
+        }
+    }
+
+    private async Task DeleteVm(string vmName)
+    {
+        if (Session.User?.IsAdmin != true || deleteBusy)
+        {
+            return;
+        }
+
+        var confirmed = await JS.InvokeAsync<bool>("confirm",
+            $"Permanently delete VPS '{vmName}'?\n\nPenguinPanel will remove its WinNAT mappings, root Windows Firewall rules, Hyper-V VM, managed VHD/VHDX files, and panel records. This cannot be undone.");
+        if (!confirmed)
+        {
+            return;
+        }
+
+        var typedName = await JS.InvokeAsync<string?>("prompt", $"Safety check: type the exact VM name to delete it:\n\n{vmName}", "");
+        if (!string.Equals((typedName ?? string.Empty).Trim(), vmName, StringComparison.Ordinal))
+        {
+            messageClass = "alert";
+            message = "Delete cancelled because the VM name did not match exactly.";
+            return;
+        }
+
+        deleteBusy = true;
+        deletingVm = vmName;
+        messageClass = "alert";
+        message = $"Deleting {vmName} and cleaning its NAT/firewall rules...";
+        try
+        {
+            var result = await Panel.DeleteVmAsync(Session.User, vmName);
+            await Load();
+            messageClass = "alert success";
+            message = result.Message;
+        }
+        catch (Exception ex)
+        {
+            messageClass = "alert";
+            message = ex.Message;
+        }
+        finally
+        {
+            deletingVm = "";
+            deleteBusy = false;
+        }
+    }
+
+    private async Task AssignVm()
+    {
+        try
+        {
+            var vmName = assignVm;
+            await Panel.AssignVmToUserAsync(Session.User, assignUserId, assignVm);
+            messageClass = "alert success";
+            message = $"VM {vmName} assigned.";
+            assignVm = "";
+            await Load();
+            message = $"VM {vmName} assigned.";
+        }
+        catch (Exception ex)
+        {
+            messageClass = "alert";
+            message = ex.Message;
+        }
+    }
+
+    private static string FormatUptime(TimeSpan value) => value == TimeSpan.Zero ? "-" : $"{(int)value.TotalDays}d {value.Hours}h {value.Minutes}m";
+
+    private static string FormatBytes(long bytes)
+    {
+        if (bytes <= 0) return "0 B";
+        string[] units = ["B", "KB", "MB", "GB", "TB"];
+        var value = (double)bytes;
+        var unit = 0;
+        while (value >= 1024 && unit < units.Length - 1)
+        {
+            value /= 1024;
+            unit++;
+        }
+
+        return $"{value:0.#} {units[unit]}";
+    }
+    private void OnSessionChanged()
+    {
+        _ = InvokeAsync(async () =>
+        {
+            if (Session.IsLoggedIn)
+            {
+                await Load();
+            }
+
+            StateHasChanged();
+        });
+    }
+
+    public void Dispose()
+    {
+        Session.Changed -= OnSessionChanged;
+    }
+
+}

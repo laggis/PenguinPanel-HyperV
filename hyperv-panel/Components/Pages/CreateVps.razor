@@ -1,0 +1,311 @@
+@page "/create-vps"
+@implements IDisposable
+@inject PanelService Panel
+@inject UserSession Session
+
+<PageTitle>Create VPS</PageTitle>
+
+@if (!Session.IsLoggedIn)
+{
+    <NotSignedIn />
+}
+else if (!IsAdminUser())
+{
+    <div class="page-head">
+        <div>
+            <h1>Create VPS</h1>
+            <p>This page is only available to administrators.</p>
+        </div>
+    </div>
+    <div class="alert">Administrator access is required.</div>
+}
+else
+{
+    <div class="page-head">
+        <div>
+            <h1>Create VPS from template</h1>
+            <p>Create a complete Hyper-V VPS from one of your VHD/VHDX templates.</p>
+        </div>
+        <div class="button-row">
+            <a class="button" href="vms">Virtual Servers</a>
+            <a class="button" href="templates">OS Templates</a>
+            <button class="button" @onclick="Load" disabled="@provisionBusy">Refresh</button>
+        </div>
+    </div>
+
+    @if (!string.IsNullOrWhiteSpace(message))
+    {
+        <div class="@messageClass">@message</div>
+    }
+
+    <section class="panel form-grid">
+        <div class="panel-head full-row">
+            <div>
+                <h2>Create VPS from template</h2>
+                <p class="muted">Clone a VHDX, create the Hyper-V VM, connect HPanel-NAT, reserve an internal IP + RDP/FiveM ports, and assign it to the customer.</p>
+            </div>
+            @if (provisionDefaults is not null)
+            {
+                <span class="pill">@provisionDefaults.SwitchName / @provisionDefaults.NatName</span>
+            }
+        </div>
+
+        @if (provisionDefaults is not null)
+        {
+            <div class="notice-card full-row">
+                <strong>Automatic networking</strong>
+                <p>Storage roots: <code>@string.Join(" · ", provisionDefaults.VmStorageRoots)</code> · IP pool: <code>@provisionDefaults.InternalIpStart - @provisionDefaults.InternalIpEnd</code> · Gateway: <code>@provisionDefaults.Gateway</code> · RDP pool: <code>@provisionDefaults.RdpPortStart-@provisionDefaults.RdpPortEnd</code> · FiveM pool: <code>@provisionDefaults.FiveMPortStart-@provisionDefaults.FiveMPortEnd</code> · Public address: <code>@provisionDefaults.PublicAddress</code></p>
+            </div>
+        }
+
+        <label>
+            Customer
+            <select @bind="provisionUserId" disabled="@provisionBusy">
+                <option value="0">Select customer</option>
+                @foreach (var user in users.Where(item => !item.IsSubUser))
+                {
+                    <option value="@user.Id">@user.Username (@user.Role)</option>
+                }
+            </select>
+        </label>
+        <label>
+            OS template
+            <select @bind="provisionTemplateId" disabled="@provisionBusy">
+                <option value="0">Select VHD/VHDX template</option>
+                @foreach (var template in templates.Where(item => item.IsEnabled && (item.IsoPath.EndsWith(".vhdx", StringComparison.OrdinalIgnoreCase) || item.IsoPath.EndsWith(".vhd", StringComparison.OrdinalIgnoreCase))))
+                {
+                    <option value="@template.Id">@template.Name (@template.OperatingSystem)</option>
+                }
+            </select>
+        </label>
+        <label>
+            VM storage location
+            <select @bind="provisionStorageRoot" disabled="@provisionBusy">
+                @if (provisionDefaults is not null)
+                {
+                    @foreach (var root in provisionDefaults.VmStorageRoots)
+                    {
+                        <option value="@root">@root</option>
+                    }
+                }
+            </select>
+        </label>
+        <label>VM name<input @bind="provisionVmName" placeholder="PH-VPS-1001" disabled="@provisionBusy" /></label>
+        <label>CPU cores<input type="number" min="1" max="64" @bind="provisionCpu" disabled="@provisionBusy" /></label>
+        <label>RAM MB<input type="number" min="512" step="512" @bind="provisionMemoryMb" disabled="@provisionBusy" /></label>
+        <label>Disk GB<input type="number" min="1" @bind="provisionDiskGb" disabled="@provisionBusy" /></label>
+        <label>Generation
+            <select @bind="provisionGeneration" disabled="@provisionBusy">
+                <option value="2">Generation 2</option>
+                <option value="1">Generation 1</option>
+            </select>
+        </label>
+        <label>Internal IPv4 <span class="muted">(blank = auto)</span><input @bind="provisionInternalIp" placeholder="Auto from pool" disabled="@provisionBusy" /></label>
+        <label>Public RDP port <span class="muted">(blank = auto)</span><input type="number" min="1024" max="65535" @bind="provisionRdpPort" placeholder="Auto" disabled="@provisionBusy" /><span class="muted">With automatic Windows guest setup enabled, PenguinPanel changes the Windows RDP listener to this same port.</span></label>
+        <label class="switch-row"><input type="checkbox" @bind="provisionEnableFiveM" disabled="@provisionBusy" /> Add FiveM TCP + UDP port mapping</label>
+        @if (provisionEnableFiveM)
+        {
+            <label>FiveM public port <span class="muted">(blank = auto)</span><input type="number" min="1024" max="65535" @bind="provisionFiveMExternalPort" placeholder="Auto" disabled="@provisionBusy" /></label>
+            <label>FiveM VM port<input type="number" min="1" max="65535" @bind="provisionFiveMInternalPort" disabled="@provisionBusy" /></label>
+            <div class="notice-card full-row compact-notice">
+                <strong>FiveM forwarding</strong>
+                <p>PenguinPanel will create both TCP and UDP WinNAT/host-firewall rules. When automatic Windows guest setup is enabled, it also opens the same FiveM port inside the VPS Windows Firewall.</p>
+            </div>
+        }
+        <label>Windows username<input @bind="provisionGuestUsername" placeholder="Administrator" disabled="@provisionBusy" /></label>
+        <label>Template/current Windows password<input type="password" @bind="provisionTemplatePassword" autocomplete="new-password" placeholder="Required for automatic guest setup" disabled="@provisionBusy" /></label>
+        <label>New customer Windows password<input type="password" @bind="provisionNewPassword" autocomplete="new-password" placeholder="Blank = generate secure password" disabled="@provisionBusy" /></label>
+        <label class="switch-row"><input type="checkbox" @bind="provisionSecureBoot" disabled="@provisionBusy" /> Secure Boot</label>
+        <label class="switch-row"><input type="checkbox" @bind="provisionStartAfter" disabled="@provisionBusy" /> Start VM after provisioning</label>
+        <label class="switch-row full-row"><input type="checkbox" @bind="provisionConfigureGuest" disabled="@provisionBusy" /> Configure Windows guest static IP/DNS, customer password, and Windows Firewall automatically with PowerShell Direct</label>
+
+        @if (provisionBusy)
+        {
+            <div class="restore-progress-card full-row">
+                <strong>Creating VPS</strong>
+                <p>@provisionStatus</p>
+                <div class="restore-progress-track"><div class="restore-progress-bar" style="width: 65%"></div></div>
+            </div>
+        }
+
+        <div class="form-actions full-row button-row">
+            <button type="button" class="button primary" @onclick="ProvisionVm" disabled="@(provisionBusy || provisionUserId == 0 || provisionTemplateId == 0 || string.IsNullOrWhiteSpace(provisionVmName))">@(provisionBusy ? "Creating VPS..." : "Create VPS")</button>
+            <button type="button" class="button" @onclick="GenerateProvisionName" disabled="@(provisionBusy || provisionUserId == 0)">Generate VM name</button>
+        </div>
+    </section>
+}
+
+@code {
+    private IReadOnlyList<PanelUserSummary> users = [];
+    private IReadOnlyList<VmTemplate> templates = [];
+    private VmProvisioningDefaults? provisionDefaults;
+    private long provisionUserId;
+    private long provisionTemplateId;
+    private string provisionVmName = string.Empty;
+    private int provisionCpu = 2;
+    private int provisionMemoryMb = 4096;
+    private int provisionDiskGb = 128;
+    private int provisionGeneration = 2;
+    private bool provisionSecureBoot = true;
+    private bool provisionStartAfter = true;
+    private bool provisionConfigureGuest = true;
+    private string provisionInternalIp = string.Empty;
+    private int? provisionRdpPort;
+    private string provisionStorageRoot = string.Empty;
+    private bool provisionEnableFiveM;
+    private int? provisionFiveMExternalPort;
+    private int provisionFiveMInternalPort = 30120;
+    private string provisionGuestUsername = "Administrator";
+    private string provisionTemplatePassword = string.Empty;
+    private string provisionNewPassword = string.Empty;
+    private bool provisionBusy;
+    private string provisionStatus = string.Empty;
+    private string? message;
+    private string messageClass = "alert success";
+
+    protected override async Task OnInitializedAsync()
+    {
+        Session.Changed += OnSessionChanged;
+        if (IsAdminUser())
+        {
+            await Load();
+        }
+    }
+
+    private bool IsAdminUser()
+    {
+        return Session.User?.IsAdmin == true
+            || string.Equals(Session.User?.Username, "admin", StringComparison.OrdinalIgnoreCase);
+    }
+
+    private async Task Load()
+    {
+        if (!IsAdminUser()) return;
+
+        message = null;
+        users = await Panel.GetUsersAsync(Session.User);
+        templates = await Panel.GetVmTemplatesAsync(Session.User);
+        provisionDefaults = Panel.GetVmProvisioningDefaults(Session.User);
+
+        if (provisionGeneration is not 1 and not 2) provisionGeneration = provisionDefaults.DefaultGeneration;
+        provisionSecureBoot = provisionDefaults.DefaultSecureBoot;
+        if (string.IsNullOrWhiteSpace(provisionStorageRoot) || !provisionDefaults.VmStorageRoots.Any(item => string.Equals(item, provisionStorageRoot, StringComparison.OrdinalIgnoreCase)))
+        {
+            provisionStorageRoot = provisionDefaults.VmStorageRoot;
+        }
+        if (provisionFiveMInternalPort is < 1 or > 65535)
+        {
+            provisionFiveMInternalPort = provisionDefaults.DefaultFiveMInternalPort;
+        }
+        if (provisionUserId == 0)
+        {
+            provisionUserId = users.FirstOrDefault(user => !user.IsAdmin && !user.IsSubUser)?.Id
+                ?? users.FirstOrDefault(user => !user.IsSubUser)?.Id
+                ?? 0;
+        }
+        if (provisionTemplateId == 0)
+        {
+            provisionTemplateId = templates.FirstOrDefault(item => item.IsEnabled && (item.IsoPath.EndsWith(".vhdx", StringComparison.OrdinalIgnoreCase) || item.IsoPath.EndsWith(".vhd", StringComparison.OrdinalIgnoreCase)))?.Id ?? 0;
+        }
+    }
+
+    private void GenerateProvisionName()
+    {
+        var user = users.FirstOrDefault(item => item.Id == provisionUserId);
+        var suffix = DateTime.UtcNow.ToString("yyMMddHHmm");
+        var owner = user?.Username ?? "VPS";
+        var safeOwner = new string(owner.Where(char.IsLetterOrDigit).Take(10).ToArray());
+        if (string.IsNullOrWhiteSpace(safeOwner)) safeOwner = "VPS";
+        provisionVmName = $"PH-{safeOwner}-{suffix}";
+    }
+
+    private async Task ProvisionVm()
+    {
+        provisionBusy = true;
+        provisionStatus = $"Preparing {provisionVmName} and reserving network resources...";
+        message = null;
+        messageClass = "alert success";
+        await InvokeAsync(StateHasChanged);
+
+        try
+        {
+            var request = new VmProvisionRequest(
+                provisionUserId,
+                provisionVmName,
+                provisionTemplateId,
+                provisionCpu,
+                provisionMemoryMb,
+                provisionDiskGb,
+                provisionGeneration,
+                provisionSecureBoot,
+                provisionStartAfter,
+                provisionConfigureGuest,
+                provisionGuestUsername,
+                provisionTemplatePassword,
+                provisionNewPassword,
+                provisionInternalIp,
+                provisionRdpPort,
+                provisionStorageRoot,
+                provisionEnableFiveM,
+                provisionFiveMExternalPort,
+                provisionFiveMInternalPort);
+
+            provisionStatus = "Copying template VHDX, creating Hyper-V VM, and connecting networking...";
+            await InvokeAsync(StateHasChanged);
+            var result = await Panel.ProvisionVmAsync(Session.User, request);
+
+            var resultClass = result.Warnings.Count == 0 ? "alert success" : "alert";
+            var resultMessage = $"{result.Message} Storage: {result.StorageRoot}. RDP: {result.PublicAddress}:{result.RdpExternalPort}. Internal IP: {result.InternalIpAddress}.";
+            if (result.FiveMExternalPort is > 0 && result.FiveMInternalPort is > 0)
+            {
+                resultMessage += $" FiveM: {result.PublicAddress}:{result.FiveMExternalPort} -> {result.InternalIpAddress}:{result.FiveMInternalPort} (TCP/UDP).";
+            }
+            if (!string.IsNullOrWhiteSpace(result.GuestPassword))
+            {
+                resultMessage += $" Windows login: {result.GuestUsername} / {result.GuestPassword}";
+            }
+            if (result.Warnings.Count > 0)
+            {
+                resultMessage += " Warnings: " + string.Join(" | ", result.Warnings);
+            }
+
+            provisionTemplatePassword = string.Empty;
+            provisionNewPassword = string.Empty;
+            provisionInternalIp = string.Empty;
+            provisionRdpPort = null;
+            provisionFiveMExternalPort = null;
+            provisionVmName = string.Empty;
+            await Load();
+            messageClass = resultClass;
+            message = resultMessage;
+        }
+        catch (Exception ex)
+        {
+            messageClass = "alert";
+            message = "VPS provisioning failed: " + ex.Message;
+        }
+        finally
+        {
+            provisionBusy = false;
+            provisionStatus = string.Empty;
+            await InvokeAsync(StateHasChanged);
+        }
+    }
+
+    private void OnSessionChanged()
+    {
+        _ = InvokeAsync(async () =>
+        {
+            if (IsAdminUser())
+            {
+                await Load();
+            }
+            StateHasChanged();
+        });
+    }
+
+    public void Dispose()
+    {
+        Session.Changed -= OnSessionChanged;
+    }
+}

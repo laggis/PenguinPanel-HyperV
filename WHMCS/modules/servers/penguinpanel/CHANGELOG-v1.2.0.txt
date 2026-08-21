@@ -1,0 +1,8 @@
+PenguinPanel WHMCS Server Module v1.2.0
+
+- Added native WHMCS ChangePackage support.
+- CPU/RAM package changes are applied to Hyper-V automatically.
+- Disk upgrades grow the VHD/VHDX; disk downgrades are rejected.
+- Added client-area CPU/RAM/disk cards.
+- Added client-area Upgrade/Downgrade and Support buttons.
+- Create and ChangePackage save actual VPS resource values into service properties.

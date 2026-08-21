@@ -1,0 +1,606 @@
+@page "/users"
+@implements IDisposable
+@inject PanelService Panel
+@inject UserSession Session
+
+<PageTitle>User Manager</PageTitle>
+
+@if (!Session.IsLoggedIn)
+{
+    <NotSignedIn />
+}
+else if (!IsAdminUser())
+{
+    <section class="panel empty-state">
+        <h1>Admin only</h1>
+        <p>User Manager is only available for administrators.</p>
+    </section>
+}
+else
+{
+    <div class="page-head">
+        <div>
+            <h1>User Manager</h1>
+            <p>Create panel users, control what tabs they can see, and assign virtual servers.</p>
+        </div>
+        <button class="button" @onclick="Load">Refresh</button>
+    </div>
+
+    @if (!string.IsNullOrWhiteSpace(message))
+    {
+        <div class="@messageClass">@message</div>
+    }
+
+    <div class="split-grid">
+        <section class="panel form-grid">
+            <div class="panel-head full-row">
+                <h2>Create user</h2>
+            </div>
+            <label>
+                Username
+                <input @bind="newUsername" autocomplete="off" />
+            </label>
+            <label>
+                Email
+                <input type="email" @bind="newEmail" autocomplete="off" placeholder="client@example.com" />
+            </label>
+            <label>
+                Password
+                <div class="inline-edit stacked-inline-edit">
+                    <input type="password" @bind="newPassword" autocomplete="new-password" placeholder="Temporary password" />
+                    <button type="button" class="button" @onclick="GenerateNewPassword" disabled="@busy">Generate secure password</button>
+                </div>
+            </label>
+            <label>
+                Role
+                <select @bind="newRole">
+                    <option value="user">user</option>
+                    <option value="admin">admin</option>
+                </select>
+            </label>
+            <div class="full-row">
+                <div class="panel-head sub-head">
+                    <h2>Default permissions</h2>
+                    <span class="muted">Admins always get every permission</span>
+                </div>
+                <div class="permission-grid">
+                    @PermissionCheckbox("Console", newPermConsole, v => newPermConsole = v, newRole == "admin")
+                    @PermissionCheckbox("Resources", newPermResources, v => newPermResources = v, newRole == "admin")
+                    @PermissionCheckbox("Access", newPermAccess, v => newPermAccess = v, newRole == "admin")
+                    @PermissionCheckbox("Network", newPermNetwork, v => newPermNetwork = v, newRole == "admin")
+                    @PermissionCheckbox("Backups", newPermBackups, v => newPermBackups = v, newRole == "admin")
+                    @PermissionCheckbox("Reinstall", newPermReinstall, v => newPermReinstall = v, newRole == "admin")
+                    @PermissionCheckbox("Activity", newPermActivity, v => newPermActivity = v, newRole == "admin")
+                    @PermissionCheckbox("Settings", newPermSettings, v => newPermSettings = v, newRole == "admin")
+                    @PermissionCheckbox("Power controls", newPermPower, v => newPermPower = v, newRole == "admin")
+                </div>
+            </div>
+            <div class="@SmtpHintClass">
+                @if (Panel.IsSmtpEnabled)
+                {
+                    <span>SMTP is enabled. If an email is entered, PenguinPanel will send the username and temporary password automatically.</span>
+                }
+                else
+                {
+                    <span>SMTP is disabled. The account will still be created, but no password email will be sent.</span>
+                }
+                <a class="button tiny" href="settings">Test SMTP</a>
+            </div>
+            <div class="form-actions full-row">
+                <button type="button" class="button primary" @onclick="CreateUser" disabled="@(busy || string.IsNullOrWhiteSpace(newUsername) || string.IsNullOrWhiteSpace(newPassword))">@(busyAction == "create" ? "Creating..." : "Create user")</button>
+                <span class="muted">Normal users default to no Network/Backups/Settings access.</span>
+            </div>
+        </section>
+
+        <section class="panel form-grid">
+            <div class="panel-head full-row">
+                <h2>Assign VM</h2>
+            </div>
+            <label>
+                User
+                <select @bind="selectedUserId">
+                    <option value="0">Select user</option>
+                    @foreach (var user in users)
+                    {
+                        <option value="@user.Id">@user.Username (@user.Role)</option>
+                    }
+                </select>
+            </label>
+            <label>
+                VM
+                <select @bind="selectedVm">
+                    <option value="">Select VM</option>
+                    @foreach (var vm in vms)
+                    {
+                        <option value="@vm.Name">@vm.Name</option>
+                    }
+                </select>
+            </label>
+            <div class="form-actions full-row">
+                <button type="button" class="button primary" @onclick="AssignVm" disabled="@(busy || selectedUserId == 0 || string.IsNullOrWhiteSpace(selectedVm))">@(busyAction == "assign" ? "Assigning..." : "Assign VM")</button>
+            </div>
+        </section>
+    </div>
+
+    <section class="panel form-grid action-panel">
+        <div class="panel-head full-row">
+            <div>
+                <h2>Reset panel password</h2>
+                <p class="muted">Use this when you want to choose the temporary password manually. User cards can reset and email automatically.</p>
+            </div>
+        </div>
+        <label>
+            User
+            <select @bind="resetUserId">
+                <option value="0">Select user</option>
+                @foreach (var user in users)
+                {
+                    <option value="@user.Id">@user.Username (@user.Role)</option>
+                }
+            </select>
+        </label>
+        <label>
+            Temporary password
+            <div class="inline-edit stacked-inline-edit">
+                <input type="password" @bind="resetPassword" autocomplete="new-password" />
+                <button type="button" class="button" @onclick="GenerateResetPassword" disabled="@busy">Generate</button>
+            </div>
+        </label>
+        <div class="form-actions full-row">
+            <button type="button" class="button" @onclick="ResetPassword" disabled="@(busy || resetUserId == 0 || string.IsNullOrWhiteSpace(resetPassword))">@(busyAction == "reset" ? "Resetting..." : "Send temporary password")</button>
+        </div>
+    </section>
+
+    <section class="panel user-manager-panel">
+        <div class="panel-head">
+            <div>
+                <h2>Users, permissions, and assignments</h2>
+                <p class="muted">Manage accounts without the old crowded table layout.</p>
+            </div>
+            <span class="pill">@users.Count users / @assignments.Count assignments</span>
+        </div>
+        <div class="user-card-list">
+            @foreach (var user in users)
+            {
+                <article class="user-card">
+                    <header class="user-card-head">
+                        <div class="user-avatar">@InitialFor(user.Username)</div>
+                        <div class="user-title-block">
+                            <div class="user-title-line">
+                                <h3>@user.Username</h3>
+                                <span class="@RolePillClass(user)">@user.Role</span>
+                                @if (user.Id == Session.User!.Id)
+                                {
+                                    <span class="pill warning-pill">current</span>
+                                }
+                            </div>
+                            <span class="muted">Created @user.CreatedAt.ToLocalTime()</span>
+                        </div>
+                        <div class="user-card-actions">
+                            <button type="button" class="button" @onclick="() => QuickResetPassword(user)" disabled="@busy">Reset password</button>
+                            <button type="button" class="danger" @onclick="() => DeleteUser(user.Id)" disabled="@(busy || !CanDeleteUser(user))">Delete</button>
+                        </div>
+                    </header>
+
+                    <div class="user-card-grid">
+                        <label>
+                            Email
+                            <input value="@EmailFor(user.Id)" @onchange="@(args => ChangeEmail(user.Id, args.Value?.ToString() ?? string.Empty))" placeholder="No email" disabled="@busy" />
+                        </label>
+                        <label>
+                            Role
+                            <select class="role-select" value="@user.Role" @onchange="@(args => ChangeRole(user.Id, args.Value?.ToString() ?? user.Role))" disabled="@(busy || IsBuiltInAdmin(user))">
+                                <option value="user">user</option>
+                                <option value="admin">admin</option>
+                            </select>
+                        </label>
+                    </div>
+
+                    <div class="user-section-row">
+                        <div>
+                            <h4>Assigned virtual servers</h4>
+                            @if (!AssignmentsForUser(user.Id).Any())
+                            {
+                                <span class="muted">No VMs assigned yet</span>
+                            }
+                            else
+                            {
+                                <div class="pill-list">
+                                    @foreach (var assignment in AssignmentsForUser(user.Id))
+                                    {
+                                        <span class="pill assignment-pill">
+                                            @assignment.VmName
+                                            <button type="button" title="Remove assignment" @onclick="() => UnassignVm(assignment.Id)" disabled="@busy">x</button>
+                                        </span>
+                                    }
+                                </div>
+                            }
+                        </div>
+                        <div>
+                            <h4>Server permissions</h4>
+                            @if (user.IsAdmin)
+                            {
+                                <span class="pill online">All admin permissions</span>
+                            }
+                            else
+                            {
+                                <div class="permission-grid compact-permissions user-permissions">
+                                    @PermissionCheckbox("Console", user.Permissions.CanViewConsole, v => UpdateUserPermissions(user, user.Permissions with { CanViewConsole = v }))
+                                    @PermissionCheckbox("Resources", user.Permissions.CanViewResources, v => UpdateUserPermissions(user, user.Permissions with { CanViewResources = v }))
+                                    @PermissionCheckbox("Access", user.Permissions.CanViewAccess, v => UpdateUserPermissions(user, user.Permissions with { CanViewAccess = v }))
+                                    @PermissionCheckbox("Network", user.Permissions.CanViewNetwork, v => UpdateUserPermissions(user, user.Permissions with { CanViewNetwork = v }))
+                                    @PermissionCheckbox("Backups", user.Permissions.CanViewBackups, v => UpdateUserPermissions(user, user.Permissions with { CanViewBackups = v }))
+                                    @PermissionCheckbox("Reinstall", user.Permissions.CanRequestReinstall, v => UpdateUserPermissions(user, user.Permissions with { CanRequestReinstall = v }))
+                                    @PermissionCheckbox("Activity", user.Permissions.CanViewActivity, v => UpdateUserPermissions(user, user.Permissions with { CanViewActivity = v }))
+                                    @PermissionCheckbox("Settings", user.Permissions.CanViewSettings, v => UpdateUserPermissions(user, user.Permissions with { CanViewSettings = v }))
+                                    @PermissionCheckbox("Power", user.Permissions.CanUsePowerActions, v => UpdateUserPermissions(user, user.Permissions with { CanUsePowerActions = v }))
+                                </div>
+                            }
+                        </div>
+                    </div>
+
+                    @if (!user.IsAdmin)
+                    {
+                        <div class="user-section-row resource-limit-row">
+                            <div>
+                                <h4>Resource limits</h4>
+                                <span class="muted">0 means unlimited. Power limit controls start/stop/restart spam per hour.</span>
+                            </div>
+                            <div class="form-grid resource-limit-grid">
+                                <label>Max VMs<input type="number" value='@LimitValue(user.Id, "vm")' @onchange='@(args => SetLimitValue(user.Id, "vm", args.Value?.ToString()))' disabled="@busy" /></label>
+                                <label>Max CPU cores<input type="number" value='@LimitValue(user.Id, "cpu")' @onchange='@(args => SetLimitValue(user.Id, "cpu", args.Value?.ToString()))' disabled="@busy" /></label>
+                                <label>Max RAM MB<input type="number" value='@LimitValue(user.Id, "ram")' @onchange='@(args => SetLimitValue(user.Id, "ram", args.Value?.ToString()))' disabled="@busy" /></label>
+                                <label>Max disk GB<input type="number" value='@LimitValue(user.Id, "disk")' @onchange='@(args => SetLimitValue(user.Id, "disk", args.Value?.ToString()))' disabled="@busy" /></label>
+                                <label>Power actions/hour<input type="number" value='@LimitValue(user.Id, "power")' @onchange='@(args => SetLimitValue(user.Id, "power", args.Value?.ToString()))' disabled="@busy" /></label>
+                                <div class="form-actions">
+                                    <button type="button" class="button primary" @onclick="() => SaveLimits(user.Id)" disabled="@busy">Save limits</button>
+                                </div>
+                            </div>
+                        </div>
+                    }
+                </article>
+            }
+        </div>
+    </section>
+}
+
+@code {
+    private IReadOnlyList<PanelUserSummary> users = [];
+    private IReadOnlyList<UserVmAssignment> assignments = [];
+    private IReadOnlyList<VmInfo> vms = [];
+    private Dictionary<long, string> emails = [];
+    private Dictionary<long, UserResourceLimits> resourceLimits = [];
+    private Dictionary<string, int> limitEdits = [];
+    private string newUsername = "";
+    private string newEmail = "";
+    private string newPassword = "";
+    private string newRole = "user";
+    private bool newPermConsole = UserVmPermissions.ClientDefault.CanViewConsole;
+    private bool newPermResources = UserVmPermissions.ClientDefault.CanViewResources;
+    private bool newPermAccess = UserVmPermissions.ClientDefault.CanViewAccess;
+    private bool newPermNetwork = UserVmPermissions.ClientDefault.CanViewNetwork;
+    private bool newPermBackups = UserVmPermissions.ClientDefault.CanViewBackups;
+    private bool newPermReinstall = UserVmPermissions.ClientDefault.CanRequestReinstall;
+    private bool newPermActivity = UserVmPermissions.ClientDefault.CanViewActivity;
+    private bool newPermSettings = UserVmPermissions.ClientDefault.CanViewSettings;
+    private bool newPermPower = UserVmPermissions.ClientDefault.CanUsePowerActions;
+    private long selectedUserId;
+    private string selectedVm = "";
+    private long resetUserId;
+    private string resetPassword = "";
+    private string? message;
+    private string messageClass = "alert success";
+    private bool busy;
+    private string busyAction = "";
+
+    protected override async Task OnInitializedAsync()
+    {
+        Session.Changed += OnSessionChanged;
+
+        if (Session.IsLoggedIn && IsAdminUser())
+        {
+            await Load();
+        }
+    }
+
+    private bool IsAdminUser()
+    {
+        return Session.User?.IsAdmin == true
+            || string.Equals(Session.User?.Username, "admin", StringComparison.OrdinalIgnoreCase);
+    }
+
+    private async Task Load()
+    {
+        users = await Panel.GetUsersAsync(Session.User);
+        emails = users.ToDictionary(item => item.Id, item => item.Email ?? string.Empty);
+        resourceLimits = await Panel.GetUserResourceLimitsAsync(Session.User);
+        SyncLimitEditors();
+        assignments = await Panel.GetUserVmAssignmentsAsync(Session.User);
+        vms = await Panel.GetVmsAsync(Session.User);
+
+        if (selectedUserId == 0)
+        {
+            selectedUserId = users.FirstOrDefault(user => !user.Username.Equals("admin", StringComparison.OrdinalIgnoreCase))?.Id
+                ?? users.FirstOrDefault()?.Id
+                ?? 0;
+        }
+    }
+
+    private string EmailFor(long userId) => emails.TryGetValue(userId, out var value) ? value : string.Empty;
+
+    private void SyncLimitEditors()
+    {
+        foreach (var user in users)
+        {
+            var limits = LimitsFor(user.Id);
+            limitEdits[$"{user.Id}:vm"] = limits.MaxVmCount;
+            limitEdits[$"{user.Id}:cpu"] = limits.MaxCpuCores;
+            limitEdits[$"{user.Id}:ram"] = limits.MaxMemoryMb;
+            limitEdits[$"{user.Id}:disk"] = limits.MaxDiskGb;
+            limitEdits[$"{user.Id}:power"] = limits.MaxPowerActionsPerHour;
+        }
+    }
+
+    private UserResourceLimits LimitsFor(long userId) => resourceLimits.TryGetValue(userId, out var limits)
+        ? limits
+        : UserResourceLimits.Default(userId);
+
+    private int LimitValue(long userId, string key) => limitEdits.TryGetValue($"{userId}:{key}", out var value) ? value : 0;
+
+    private void SetLimitValue(long userId, string key, string? raw)
+    {
+        limitEdits[$"{userId}:{key}"] = int.TryParse(raw, out var value) ? Math.Max(0, value) : 0;
+    }
+
+    private string SmtpHintClass => Panel.IsSmtpEnabled
+        ? "full-row smtp-hint smtp-hint-enabled"
+        : "full-row smtp-hint smtp-hint-disabled";
+
+    private UserVmPermissions NewUserPermissions() => new(
+        newPermConsole,
+        newPermResources,
+        newPermAccess,
+        newPermNetwork,
+        newPermBackups,
+        newPermReinstall,
+        newPermActivity,
+        newPermSettings,
+        newPermPower);
+
+    private async Task CreateUser()
+    {
+        await RunAdminAction("create", "Creating user and sending welcome email...", async () =>
+        {
+            var createdName = newUsername.Trim();
+            var createdEmail = newEmail.Trim();
+            var emailSent = await Panel.CreateUserAsync(Session.User, newUsername, newPassword, newRole, newEmail, NewUserPermissions());
+            message = emailSent
+                ? $"User {createdName} created and password email sent to {createdEmail}."
+                : Panel.IsSmtpEnabled && !string.IsNullOrWhiteSpace(createdEmail)
+                    ? $"User {createdName} created, but the password email could not be sent. Check SMTP settings and Audit Logs."
+                    : Panel.IsSmtpEnabled
+                        ? $"User {createdName} created. Add an email address to send login details automatically."
+                        : $"User {createdName} created. SMTP is disabled, so no password email was sent.";
+            newUsername = "";
+            newEmail = "";
+            newPassword = "";
+            newRole = "user";
+            await Load();
+        });
+    }
+
+    private async Task AssignVm()
+    {
+        await RunAdminAction("assign", "Assigning VM...", async () =>
+        {
+            var vmName = selectedVm;
+            await Panel.AssignVmToUserAsync(Session.User, selectedUserId, selectedVm);
+            message = $"VM {vmName} assigned.";
+            selectedVm = "";
+            await Load();
+        });
+    }
+
+    private async Task UnassignVm(long assignmentId)
+    {
+        await RunAdminAction("assign", "Removing VM assignment...", async () =>
+        {
+            await Panel.UnassignVmFromUserAsync(Session.User, assignmentId);
+            message = "VM assignment removed.";
+            await Load();
+        });
+    }
+
+    private async Task ResetPassword()
+    {
+        await RunAdminAction("reset", "Resetting password and sending email...", async () =>
+        {
+            var emailSent = await Panel.ResetUserPasswordAsync(Session.User, resetUserId, resetPassword);
+            message = emailSent
+                ? "Temporary password set and email sent."
+                : Panel.IsSmtpEnabled
+                    ? "Temporary password set, but no password email was sent. Check that the user has an email address and review Audit Logs for SMTP errors."
+                    : "Temporary password set. SMTP is disabled, so no password email was sent.";
+            resetPassword = "";
+            await Load();
+        });
+    }
+
+    private async Task QuickResetPassword(PanelUserSummary user)
+    {
+        await RunAdminAction("reset", $"Resetting password for {user.Username}...", async () =>
+        {
+            var temporaryPassword = GenerateFriendlyPassword();
+            var userEmail = EmailFor(user.Id).Trim();
+            var emailSent = await Panel.ResetUserPasswordAsync(Session.User, user.Id, temporaryPassword);
+            message = emailSent
+                ? $"Temporary password reset and emailed to {userEmail}."
+                : Panel.IsSmtpEnabled && !string.IsNullOrWhiteSpace(userEmail)
+                    ? $"Temporary password reset for {user.Username}, but the email could not be sent. Temporary password: {temporaryPassword}"
+                    : Panel.IsSmtpEnabled
+                        ? $"Temporary password reset for {user.Username}. Add an email address to send it automatically. Temporary password: {temporaryPassword}"
+                        : $"Temporary password reset for {user.Username}. SMTP is disabled. Temporary password: {temporaryPassword}";
+            resetUserId = 0;
+            resetPassword = "";
+            await Load();
+        });
+    }
+
+    private Task SaveLimits(long userId)
+    {
+        return RunAdminAction("limits", "Saving resource limits...", async () =>
+        {
+            var limits = new UserResourceLimits(
+                userId,
+                LimitValue(userId, "vm"),
+                LimitValue(userId, "cpu"),
+                LimitValue(userId, "ram"),
+                LimitValue(userId, "disk"),
+                LimitValue(userId, "power"));
+            await Panel.SaveUserResourceLimitsAsync(Session.User, limits);
+            message = "Resource limits updated.";
+            await Load();
+        });
+    }
+
+    private async Task ChangeEmail(long userId, string email)
+    {
+        emails[userId] = email;
+        await RunAdminAction("email", "Updating email...", async () =>
+        {
+            await Panel.UpdateUserEmailAsync(Session.User, userId, email);
+            message = "Email updated.";
+            await Load();
+        });
+    }
+
+    private async Task ChangeRole(long userId, string role)
+    {
+        await RunAdminAction("role", "Updating role...", async () =>
+        {
+            await Panel.UpdateUserRoleAsync(Session.User, userId, role);
+            message = "User role updated.";
+            await Load();
+        });
+    }
+
+    private Task UpdateUserPermissions(PanelUserSummary user, UserVmPermissions permissions)
+    {
+        return RunAdminAction("permissions", "Updating permissions...", async () =>
+        {
+            await Panel.UpdateUserPermissionsAsync(Session.User, user.Id, permissions);
+            message = $"Permissions updated for {user.Username}.";
+            await Load();
+        });
+    }
+
+    private async Task DeleteUser(long userId)
+    {
+        await RunAdminAction("delete", "Deleting user...", async () =>
+        {
+            await Panel.DeleteUserAsync(Session.User, userId);
+            message = "User deleted.";
+            if (selectedUserId == userId) selectedUserId = 0;
+            if (resetUserId == userId) resetUserId = 0;
+            await Load();
+        });
+    }
+
+    private void GenerateNewPassword()
+    {
+        newPassword = GenerateFriendlyPassword();
+    }
+
+    private void GenerateResetPassword()
+    {
+        resetPassword = GenerateFriendlyPassword();
+    }
+
+    private static string GenerateFriendlyPassword()
+    {
+        const string alphabet = "ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz23456789!@$%";
+        var bytes = System.Security.Cryptography.RandomNumberGenerator.GetBytes(18);
+        var chars = bytes.Select(item => alphabet[item % alphabet.Length]).ToArray();
+        return new string(chars);
+    }
+
+    private IEnumerable<UserVmAssignment> AssignmentsForUser(long userId) => assignments.Where(item => item.UserId == userId);
+
+    private static string InitialFor(string username) => string.IsNullOrWhiteSpace(username) ? "?" : username.Trim()[0].ToString().ToUpperInvariant();
+
+    private static string RolePillClass(PanelUserSummary user) => user.IsAdmin ? "pill online" : "pill";
+
+    private bool CanDeleteUser(PanelUserSummary user) => user.Id != Session.User!.Id && !IsBuiltInAdmin(user);
+
+    private static bool IsBuiltInAdmin(PanelUserSummary user) => user.Username.Equals("admin", StringComparison.OrdinalIgnoreCase);
+
+    private async Task RunAdminAction(string actionName, string workingMessage, Func<Task> action)
+    {
+        busy = true;
+        busyAction = actionName;
+        messageClass = "alert info";
+        message = workingMessage;
+        await InvokeAsync(StateHasChanged);
+
+        try
+        {
+            await action();
+            messageClass = "alert success";
+        }
+        catch (Exception ex)
+        {
+            messageClass = "alert";
+            message = ex.Message;
+            try { await Load(); } catch { }
+        }
+        finally
+        {
+            busy = false;
+            busyAction = "";
+        }
+    }
+
+    private RenderFragment PermissionCheckbox(string label, bool value, Action<bool> setValue, bool disabled = false)
+    {
+        return PermissionCheckbox(label, value, input =>
+        {
+            setValue(input);
+            return Task.CompletedTask;
+        }, disabled);
+    }
+
+    private RenderFragment PermissionCheckbox(string label, bool value, Func<bool, Task> setValue, bool disabled = false) => builder =>
+    {
+        var seq = 0;
+        builder.OpenElement(seq++, "label");
+        builder.AddAttribute(seq++, "class", "permission-toggle");
+        builder.OpenElement(seq++, "input");
+        builder.AddAttribute(seq++, "type", "checkbox");
+        builder.AddAttribute(seq++, "checked", disabled || value);
+        builder.AddAttribute(seq++, "disabled", disabled || busy);
+        builder.AddAttribute(seq++, "onchange", EventCallback.Factory.Create<ChangeEventArgs>(this, async args => await setValue(args.Value is bool boolValue && boolValue)));
+        builder.CloseElement();
+        builder.OpenElement(seq++, "span");
+        builder.AddContent(seq++, label);
+        builder.CloseElement();
+        builder.CloseElement();
+    };
+
+    private void OnSessionChanged()
+    {
+        _ = InvokeAsync(async () =>
+        {
+            if (Session.IsLoggedIn && IsAdminUser())
+            {
+                await Load();
+            }
+
+            StateHasChanged();
+        });
+    }
+
+    public void Dispose()
+    {
+        Session.Changed -= OnSessionChanged;
+    }
+}

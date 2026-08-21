@@ -1,0 +1,8 @@
+PenguinPanel WHMCS Server Module v1.1.4
+
+- New PenguinPanel accounts use the WHMCS client email/login identity instead of whmcs-<id>.
+- WHMCS service Username now stores the actual PenguinPanel username.
+- Windows Username is stored separately as a service property (normally Administrator).
+- WHMCS service Password remains the initial Windows password and the initial PenguinPanel password for newly-created panel accounts.
+- Client area and Swedish welcome email now clearly separate PenguinPanel and Windows usernames.
+- Existing PenguinPanel users matched by email are reused and keep their existing panel password.

@@ -1,583 +1,952 @@
-# Hyper-V Management Panel
+# PenguinPanel + WHMCS Integration
 
-A modern, full-featured web-based management panel for Microsoft Hyper-V virtualization platform. Built with React, Node.js, and PowerShell integration.
+> GitHub-safe source snapshot for the PenguinHosting Hyper-V VPS platform.
 
-![License](https://img.shields.io/badge/license-MIT-blue.svg)
-![Node](https://img.shields.io/badge/node-%3E%3D18.0.0-brightgreen.svg)
-![React](https://img.shields.io/badge/react-18.x-blue.svg)
+**Snapshot date:** 2026-08-21  
+**PenguinPanel code line:** Step 2.9.1 + Step 2.8.1 + Step 2.7 cumulative  
+**WHMCS server module:** v1.2.3  
+**WHMCS addon module:** v1.1.0
 
-## 🚀 Features
+This repository contains the current PenguinPanel / Hyper-V / WHMCS integration and the configuration/documentation needed to rebuild it.
 
-### Virtual Machine Management
-- ✅ **Full VM Control** - Start, stop, restart, suspend, and resume VMs
-- ✅ **Real-time Monitoring** - CPU, memory, disk, and network usage
-- ✅ **Snapshot Management** - Create, restore, and delete VM snapshots
-- ✅ **ISO Library** - Mount and unmount ISO files
-- ✅ **VM Creation Wizard** - Create new VMs with custom specifications
-- ✅ **RDP/Console Access** - Direct VM console access via browser
-- ✅ **Password Reset** - Reset Windows passwords (guest and emergency offline methods)
-
-### User & Access Control
-- 🔐 **Role-Based Access** - Admin, User, and Viewer roles
-- 🔐 **JWT Authentication** - Secure token-based auth with refresh tokens
-- 🔐 **2FA Support** - TOTP-based two-factor authentication
-- 🔐 **Session Management** - View and revoke active sessions
-- 🔐 **VM-Level Permissions** - Assign specific VMs to users
-- 🔐 **Discord Integration** - OAuth login and whitelist support
-- 🔐 **Brute Force Protection** - Rate limiting and lockout mechanisms
-
-### Advanced Features
-- 📊 **Bandwidth Monitoring** - Track network usage over time
-- 🚨 **Alert System** - CPU/memory/status alerts via email/webhook
-- 🛡️ **DDoS Protection** - Automatic detection and mitigation of outbound attacks
-- 👥 **Client Management** - Track clients, billing, and VM assignments
-- 📝 **Audit Logging** - Comprehensive action logging with user tracking
-- 🔍 **Security Dashboard** - Login attempts, risk events, and session monitoring
-
-### Developer Features
-- 🎨 **Modern UI** - Dark theme with Tailwind CSS
-- 🔄 **Real-time Updates** - Auto-refresh VM status
-- 📱 **Responsive Design** - Works on desktop and mobile
-- 🌐 **RESTful API** - Well-documented backend API
-- ⚡ **Performance** - VM caching for fast page loads
-- 🛠️ **Extensible** - Modular architecture for easy customization
+Production secrets, customer database data, VM disks and Windows template disks are intentionally **not** included.
 
 ---
 
-## 📋 Prerequisites
+## What the project does
 
-### Server Requirements
-- **Windows Server** 2016 or newer (with Hyper-V role installed)
-- **Node.js** 18.x or newer
-- **MySQL** 5.7 or newer (or MariaDB 10.3+)
-- **PowerShell** 5.1 or newer
-- **Administrator privileges** for Hyper-V management
+PenguinPanel provides a web control panel and WHMCS provisioning API for Windows Hyper-V VPS hosting.
 
-### Client Requirements
-- Modern web browser (Chrome, Firefox, Edge, Safari)
-- JavaScript enabled
+Current integration features include:
 
----
-
-## 🔧 Installation
-
-### 1. Clone the Repository
-
-```bash
-git clone https://github.com/laggis/Hyperv-Control-Panel.git
-cd hyperv-panel
-```
-
-### 2. Database Setup
-
-**Create MySQL Database:**
-
-```sql
-CREATE DATABASE hyperv_panel CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;
-CREATE USER 'hyperv_panel'@'localhost' IDENTIFIED BY 'your_secure_password';
-GRANT ALL PRIVILEGES ON hyperv_panel.* TO 'hyperv_panel'@'localhost';
-FLUSH PRIVILEGES;
-```
-
-### 3. Backend Setup
-
-```bash
-cd backend
-npm install
-```
-
-**Configure Environment Variables:**
-
-Copy the example `.env` file and edit it:
-
-```bash
-cp .env.example .env
-```
-
-Edit `.env` with your settings:
-
-```env
-# Server
-PORT=3001
-NODE_ENV=production
-
-# MySQL Database
-DB_HOST=localhost
-DB_PORT=3306
-DB_USER=hyperv_panel
-DB_PASSWORD=your_secure_password
-DB_NAME=hyperv_panel
-
-# JWT (generate secure random strings)
-JWT_SECRET=your_jwt_secret_here
-JWT_EXPIRES_IN=15m
-REFRESH_TOKEN_EXPIRES=604800
-
-# PowerShell
-PS_EXECUTION_POLICY=Bypass
-
-# VM root paths (semicolon-separated Windows paths)
-VM_ROOTS=C:\Vms;D:\HyperV\Virtual Machines
-
-# Default admin user
-DEFAULT_ADMIN_USER=admin
-```
-
-**First Run:**
-
-```bash
-node server.js
-```
-
-The system will:
-- Create all database tables automatically
-- Generate a random admin password (printed to console)
-- **⚠️ IMPORTANT:** Copy the admin password immediately - it won't be shown again!
-
-### 4. Frontend Setup
-
-```bash
-cd ../frontend
-npm install
-npm run build
-```
-
-The built frontend will be served by the backend in production mode.
+- WHMCS → PenguinPanel → Hyper-V VPS provisioning
+- Start, stop, suspend, unsuspend and terminate support
+- Safe failed-provision retry when no Hyper-V VM exists
+- Windows guest setup through Hyper-V PowerShell Direct
+- Automatic internal IPv4 allocation
+- Automatic public RDP port allocation
+- Optional FiveM TCP + UDP port mapping
+- Host listener / WinNAT / reserved-port collision protection
+- Smart VM storage placement using live disk free space
+- Manual per-service storage override before provisioning
+- CPU and RAM upgrades/downgrades from WHMCS
+- VHD/VHDX disk growth from WHMCS
+- Automatic Windows `C:` partition expansion when possible
+- Disk shrinking deliberately blocked
+- Customer-friendly PenguinPanel usernames
+- Customer-friendly VM names based on WHMCS first name
+- Hyper-V + database collision-safe VM naming
+- PenguinHosting-styled HTML email notifications
+- WHMCS welcome and fixed-term termination email templates
+- Guacamole web RDP integration
+- Safe cleanup of WHMCS-created PenguinPanel accounts after their final VPS is terminated
+- API rate limiting, HTTPS requirement and optional source-IP allowlisting
 
 ---
 
-## 🚀 Running the Application
+## Repository layout
 
-### Production Mode
-
-```bash
-cd backend
-node server.js
+```text
+.
+├── PenguinPanel/
+│   ├── Components/
+│   ├── Services/
+│   ├── wwwroot/
+│   ├── Program.cs
+│   ├── HyperVPanel.csproj
+│   └── appsettings.example.json
+│
+├── WHMCS/
+│   ├── modules/
+│   │   ├── servers/penguinpanel/
+│   │   └── addons/penguinpanel/
+│   └── email-templates/
+│
+├── database/
+│   └── schema.sql
+│
+├── release-packages/
+├── README.md
+├── WHMCS-PRODUCT-SETUP.md
+├── PATCH-HISTORY.md
+├── PRIVATE-BACKUP-CHECKLIST.md
+├── FILE-MANIFEST.sha256
+└── .gitignore
 ```
-
-Access the panel at: `http://your-server:3001`
-
-### Development Mode
-
-**Backend:**
-```bash
-cd backend
-npm run dev  # or: node server.js
-```
-
-**Frontend (separate terminal):**
-```bash
-cd frontend
-npm run dev
-```
-
-Access:
-- Frontend: `http://localhost:5173`
-- Backend API: `http://localhost:3001`
 
 ---
 
-## 📖 Usage Guide
+# PenguinPanel configuration
 
-### First Login
+Copy:
 
-1. Navigate to `http://your-server:3001`
-2. Login with the admin credentials from first run
-3. **Change the admin password immediately** (Security → Change Password)
+```text
+PenguinPanel/appsettings.example.json
+```
 
-### Creating Users
+to:
 
-1. Go to **Users** page
-2. Click **New User**
-3. Set username, password, and role
-4. Optionally assign VMs
-5. Click **Create**
+```text
+PenguinPanel/appsettings.json
+```
 
-### Managing VMs
+and replace every `CHANGE_ME...` value before starting the panel.
 
-**View VMs:**
-- Navigate to **Virtual Machines** page
-- See real-time status of all VMs
+## ConnectionStrings
 
-**Control VM:**
-- Click on a VM to see details
-- Use action buttons: Start, Stop, Restart, Suspend, Resume
-- Create snapshots for backup
-
-**Assign VM to User:**
-1. Go to **Users** page
-2. Click **Assign VMs** for a user
-3. Select VMs from the list
-4. Click **Save**
-
-### Setting Up Alerts
-
-1. Go to **Alerts** page
-2. Click **New Rule**
-3. Configure:
-   - Metric (CPU, Memory, VM Status)
-   - Threshold
-   - Email/Webhook notifications
-4. Click **Create Rule**
-
-### DDoS Protection
-
-1. Go to **DDoS Protection** page
-2. Click **Configure**
-3. Set:
-   - Detection thresholds (MB/s)
-   - Alert email/webhook
-   - Auto-actions (optional)
-4. Click **Save Configuration**
-
-The system monitors all VMs every 60 seconds and alerts you of suspicious traffic.
-
----
-
-## 🔒 Security Best Practices
-
-### Essential Security Steps
-
-1. **Change Default Admin Password** - Immediately after first login
-2. **Use Strong JWT Secret** - Generate a secure random string (32+ characters)
-3. **Enable 2FA** - For admin accounts (Security page)
-4. **Configure HTTPS** - Use a reverse proxy (nginx/IIS) with SSL certificate
-5. **Restrict Network Access** - Use firewall rules to limit access
-6. **Regular Backups** - Backup MySQL database regularly
-7. **Update Dependencies** - Keep Node.js packages up to date
-8. **Review Audit Logs** - Check logs regularly for suspicious activity
-
-### Recommended nginx Configuration
-
-```nginx
-server {
-    listen 443 ssl http2;
-    server_name hyperv.yourdomain.com;
-    
-    ssl_certificate /path/to/cert.pem;
-    ssl_certificate_key /path/to/key.pem;
-    
-    location / {
-        proxy_pass http://localhost:3001;
-        proxy_http_version 1.1;
-        proxy_set_header Upgrade $http_upgrade;
-        proxy_set_header Connection 'upgrade';
-        proxy_set_header Host $host;
-        proxy_set_header X-Real-IP $remote_addr;
-        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
-        proxy_set_header X-Forwarded-Proto $scheme;
-        proxy_cache_bypass $http_upgrade;
-    }
+```json
+"ConnectionStrings": {
+  "PanelDb": "Server=127.0.0.1;Port=3307;Database=hyperv_panel;User ID=hyperv_panel;Password=CHANGE_ME;SslMode=Preferred;Allow User Variables=True;"
 }
 ```
 
+`PanelDb` is the MariaDB/MySQL connection used by PenguinPanel.
+
+The production database/password must never be committed to GitHub.
+
 ---
 
-## 🛠️ Configuration
+## Security
 
-### Environment Variables
+```json
+"Security": {
+  "DataProtectionKey": "CHANGE_ME_LONG_RANDOM_DATA_PROTECTION_KEY",
+  "MaxFailedLoginAttempts": 5,
+  "LoginLockoutMinutes": 15,
+  "EmergencyResetRequireEmailCode": true,
+  "EmergencyResetCodeMinutes": 10,
+  "EmergencyResetCodeCooldownSeconds": 60
+}
+```
 
-| Variable | Description | Default |
-|----------|-------------|---------|
-| `PORT` | Backend server port | `3001` |
-| `NODE_ENV` | Environment (development/production) | `development` |
-| `DB_HOST` | MySQL host | `localhost` |
-| `DB_PORT` | MySQL port | `3306` |
-| `DB_USER` | MySQL username | `hyperv_panel` |
-| `DB_PASSWORD` | MySQL password | - |
-| `DB_NAME` | MySQL database name | `hyperv_panel` |
-| `JWT_SECRET` | Secret for JWT signing | Required |
-| `JWT_EXPIRES_IN` | JWT expiry time | `15m` |
-| `REFRESH_TOKEN_EXPIRES` | Refresh token expiry (seconds) | `604800` |
-| `VM_ROOTS` | Semicolon-separated VM root paths | - |
-| `PS_EXECUTION_POLICY` | PowerShell execution policy | `Bypass` |
-| `CORS_ORIGINS` | Allowed CORS origins | `http://localhost:5173` |
-| `DEFAULT_ADMIN_USER` | Default admin username | `admin` |
+Recommended behavior:
 
-### VM Root Paths
+- keep login lockout enabled;
+- use a long random Data Protection key;
+- keep email verification enabled for emergency RDP password reset.
 
-The `VM_ROOTS` setting controls which VMs are visible in the panel. Only VMs whose files (config, VHD, etc.) are located under these paths will be shown (unless `show_all_vms` is enabled).
+---
+
+## Panel URL
+
+```json
+"Panel": {
+  "PublicUrl": "https://vps.penguinhosting.host/"
+}
+```
+
+This is the normal public PenguinPanel URL used in emails and links.
+
+---
+
+## SMTP
+
+```json
+"Smtp": {
+  "Enabled": true,
+  "Host": "mailserver.penguinhosting.host",
+  "Port": 587,
+  "EnableSsl": false,
+  "Username": "noreply@penguinhosting.host",
+  "Password": "CHANGE_ME_SMTP_PASSWORD",
+  "FromEmail": "noreply@penguinhosting.host",
+  "FromName": "PenguinPanel",
+  "TimeoutSeconds": 15
+}
+```
+
+PenguinPanel-generated HTML mail uses the shared PenguinHosting theme.
+
+Current theme palette:
+
+| Purpose | Color |
+|---|---|
+| Main background/header | `#081220` |
+| Card | `#12243d` |
+| Inner card | `#0d1b2f` |
+| Border | `#25476f` |
+| Accent | `#7dd3fc` |
+| Main text | `#ffffff` |
+| Body text | `#dbeafe` |
+| Muted text | `#9fb4d0` / `#637b9d` |
+| Primary button | `#2563eb` |
+
+The shared renderer applies to account, password reset, VPS-ready, RDP reset, power/action and other PenguinPanel notifications.
+
+---
+
+# Web RDP / Guacamole
+
+```json
+"WebRdp": {
+  "Enabled": true,
+  "Provider": "Guacamole",
+  "BaseUrl": "https://remotedesktop.penguinhosting.host",
+  "EmbedInConsole": true,
+  "PreferPerVmWebConsoleUrl": false,
+  "PathTemplate": "/#/client/{connectionId}",
+  "Security": "nla",
+  "JsonAuth": {
+    "Enabled": true,
+    "SecretKey": "CHANGE_ME_GUACAMOLE_JSON_AUTH_SECRET",
+    "UseApiToken": true,
+    "TokenLifetimeMinutes": 60,
+    "Security": "nla",
+    "IgnoreCertificate": true,
+    "ResizeMethod": "display-update",
+    "CacheSeconds": 120,
+    "RequestTimeoutSeconds": 3
+  }
+}
+```
+
+Never commit the real Guacamole JSON auth secret.
+
+---
+
+# Hyper-V networking
+
+## Network profile
+
+```json
+"NetworkProfiles": {
+  "NatName": "HPanel-NAT",
+  "NatBindAddress": "0.0.0.0",
+  "DefaultExternalIp": "0.0.0.0/0",
+  "Gateway": "192.168.119.1"
+}
+```
+
+Current intended NAT/switch name:
+
+```text
+HPanel-NAT
+```
+
+---
+
+## Provisioning network settings
+
+Recommended baseline:
+
+```json
+"Provisioning": {
+  "PublicAddress": "81.16.177.72",
+  "PublicHostname": "node1.penguinhosting.host",
+
+  "SwitchName": "HPanel-NAT",
+  "NatName": "HPanel-NAT",
+
+  "InternalIpStart": "192.168.119.50",
+  "InternalIpEnd": "192.168.119.220",
+  "ReservedInternalIps": "192.168.119.1;192.168.119.40",
+
+  "Gateway": "192.168.119.1",
+  "PreferredDnsServer": "1.1.1.1",
+  "AlternateDnsServer": "1.0.0.1",
+
+  "RdpPortStart": 22000,
+  "RdpPortEnd": 22999,
+
+  "FiveMPortStart": 35000,
+  "FiveMPortEnd": 35999,
+  "DefaultFiveMInternalPort": 30120
+}
+```
+
+### `PublicAddress`
+
+The real public IPv4 used for NAT/firewall work.
+
+Current example:
+
+```text
+81.16.177.72
+```
+
+### `PublicHostname`
+
+Optional customer-facing hostname used by PenguinPanel's own VPS-ready notification display.
 
 Example:
-```env
-VM_ROOTS=C:\Vms;D:\HyperV\Virtual Machines;E:\Production
+
+```text
+node1.penguinhosting.host
 ```
 
-To show all VMs regardless of location, set in database:
-```sql
-UPDATE settings SET value = '1' WHERE `key` = 'show_all_vms';
+Networking still uses `PublicAddress`.
+
+### WHMCS RDP hostname is separate
+
+The WHMCS server module has its own setting:
+
+```text
+RDP Customer Hostname
+```
+
+Current intended value:
+
+```text
+remotedesktop.penguinhosting.host
+```
+
+This allows WHMCS/client/email display to show:
+
+```text
+remotedesktop.penguinhosting.host:22000
+```
+
+while FiveM can continue to be presented as the real public IP + port.
+
+If native RDP is used through this hostname, it must resolve directly to the Hyper-V host/public IP. A standard Cloudflare-proxied hostname should not be used for arbitrary raw RDP ports.
+
+---
+
+# Port allocation and collision protection
+
+Recommended PenguinPanel-owned public ranges:
+
+```text
+22000-22999  -> RDP
+35000-35999  -> FiveM
+```
+
+In WHMCS products leave these at `0`:
+
+```text
+Public RDP Port:   0
+Public FiveM Port: 0
+```
+
+`0` means PenguinPanel automatically allocates a collision-safe port.
+
+FiveM inside the VM normally remains:
+
+```text
+30120
+```
+
+Example:
+
+```text
+Public FiveM: 81.16.177.72:35004
+Guest FiveM:  192.168.119.55:30120
+```
+
+The allocator checks:
+
+- PenguinPanel's existing allocations;
+- WinNAT mappings;
+- actual TCP listeners on the Hyper-V host;
+- actual UDP endpoints on the Hyper-V host;
+- manually reserved external ports.
+
+## Reserved host / TCAdmin ports
+
+Example:
+
+```json
+"ReservedExternalPorts": "80;443;3306;3307;8443;8822;9998;30120;30124;40105"
+```
+
+Add any TCAdmin allocation range here if PenguinPanel must never allocate from it even while the TCAdmin service is stopped.
+
+Example:
+
+```json
+"ReservedExternalPorts": "80;443;30120;30124;30000-32000"
 ```
 
 ---
 
-## 📡 API Documentation
+# Smart VM storage
 
-### Authentication
+Approved roots:
 
-All API endpoints (except `/auth/login`) require a JWT token:
-
-```bash
-Authorization: Bearer <your_jwt_token>
+```json
+"VmStorageRoot": "D:\\Vms",
+"VmStorageRoots": [
+  "D:\\Vms",
+  "C:\\Virtual Machines"
+]
 ```
 
-### Key Endpoints
+Automatic placement:
 
-**Authentication:**
-- `POST /api/auth/login` - Login with username/password
-- `POST /api/auth/refresh` - Refresh access token
-- `POST /api/auth/logout` - Logout and revoke session
-- `GET /api/auth/me` - Get current user info
+```json
+"StorageSelectionMode": "MostFreeSpace",
+"MinimumFreeSpaceAfterProvisionGb": 100,
+"MinimumFreeSpaceAfterProvisionPercent": 5
+```
 
-**Virtual Machines:**
-- `GET /api/vms` - List all VMs
-- `GET /api/vms/:name` - Get VM details
-- `POST /api/vms/:name/start` - Start VM
-- `POST /api/vms/:name/stop` - Stop VM
-- `POST /api/vms/:name/restart` - Restart VM
+The effective safety reserve is the larger of:
 
-**Users (Admin only):**
-- `GET /api/auth/users` - List all users
-- `POST /api/auth/users` - Create user
-- `DELETE /api/auth/users/:id` - Delete user
-- `PUT /api/auth/users/:id/password` - Change password
+```text
+100 GB
+or
+5% of the physical volume
+```
 
-**Alerts:**
-- `GET /api/alerts` - List alert rules
-- `POST /api/alerts` - Create alert rule
-- `GET /api/alerts/events` - List recent alert events
+Automatic storage selection:
 
-**DDoS Protection:**
-- `GET /api/ddos/events` - Get DDoS events
-- `GET /api/ddos/stats` - Get statistics
-- `GET /api/ddos/config` - Get configuration
-- `PUT /api/ddos/config` - Update configuration
+1. reads each approved storage root;
+2. checks live free/total space;
+3. checks requested VPS disk size;
+4. keeps the configured safety reserve;
+5. chooses a safe root with the most free space.
 
-Full API documentation: See `API.md` for complete endpoint reference.
+Manual storage selection is also validated at provisioning time.
+
+A manually selected root is refused if it cannot safely fit the requested VHD/VHDX.
+
+### WHMCS storage behavior
+
+For normal products use:
+
+```text
+VM Storage Root: Automatic / blank
+```
+
+Before provisioning, the WHMCS service admin page can show the approved roots and current free space so an administrator can override the disk.
+
+For this workflow keep automatic provisioning disabled until the administrator has selected storage if a manual per-order choice is required.
 
 ---
 
-## 🔍 Troubleshooting
+# Windows guest configuration
 
-### Common Issues
+Recommended WHMCS settings:
 
-**Backend won't start:**
-- Check MySQL is running and accessible
-- Verify database credentials in `.env`
-- Check if port 3001 is available
-- Review console logs for errors
-
-**Can't see any VMs:**
-- Verify Hyper-V is installed and running
-- Check `VM_ROOTS` paths in `.env`
-- Set `show_all_vms = 1` in database to bypass filtering
-- Ensure backend is running as Administrator
-- Check PowerShell execution policy
-
-**Authentication fails:**
-- Verify JWT_SECRET is set in `.env`
-- Check MySQL users table for user account
-- Try password reset script: `node scripts/reset-password.js`
-- Clear browser cache and cookies
-
-**VMs not responding to commands:**
-- Verify user has permissions for the VM
-- Check Windows Event Viewer for Hyper-V errors
-- Ensure Hyper-V Management service is running
-- Review backend logs for PowerShell errors
-
-**Frontend shows white screen:**
-- Rebuild frontend: `cd frontend && npm run build`
-- Clear browser cache (Ctrl+Shift+R)
-- Check browser console for errors (F12)
-- Verify `NODE_ENV=production` in backend `.env`
-
-### Debug Mode
-
-Enable detailed logging:
-
-```bash
-# Backend - check console output
-node server.js
-
-# View specific route logs
-# Check for [filterVmList] or [ddos] prefixed messages
+```text
+Hyper-V Generation:        2
+Secure Boot:               Enabled
+Start After Provision:     Enabled
+Configure Windows Guest:   Enabled
+Windows Username:          Administrator
+FiveM Internal Port:       30120
+Public RDP Port:           0
+Public FiveM Port:         0
 ```
 
-**Check VM filtering:**
-```
-GET /api/vms/debug-filter
-```
+`Template Administrator Password` must contain the current Administrator password inside the golden Windows VHD/VHDX when automatic Windows guest configuration is enabled.
 
-This shows all VMs, paths, and why each is included/excluded.
+PenguinPanel can configure:
+
+- internal IPv4;
+- gateway and DNS;
+- Windows Administrator password;
+- Windows RDP listener port;
+- Windows Firewall;
+- public RDP WinNAT mapping;
+- FiveM TCP/UDP mapping.
+
+If Windows refuses to restart `TermService` during first boot, the current RDP sync routine can reboot the Hyper-V VM once, wait for PowerShell Direct to return and verify the requested RDP listener.
 
 ---
 
-## 📁 Project Structure
+# VM naming
 
+Default behavior for a new WHMCS VPS:
+
+```text
+WHMCS client first name -> VM name
 ```
-hyperv-panel/
-├── backend/
-│   ├── middleware/          # Auth, audit logging
-│   ├── routes/              # API endpoints
-│   ├── utils/               # Database, PowerShell, monitoring
-│   ├── scripts/             # Utility scripts (password reset, etc.)
-│   ├── server.js            # Main server file
-│   └── .env                 # Configuration
-├── frontend/
-│   ├── src/
-│   │   ├── components/      # Reusable UI components
-│   │   ├── pages/           # Page components
-│   │   ├── hooks/           # React hooks
-│   │   ├── api.js           # API client
-│   │   └── main.jsx         # App entry point
-│   ├── dist/                # Production build output
-│   └── vite.config.js       # Vite configuration
-└── README.md                # This file
+
+Examples:
+
+```text
+Daniel
+Test
+Alex
+```
+
+Collision behavior:
+
+```text
+Test
+Test-887
+Test-887-2
+Test-887-3
+```
+
+The allocator checks both:
+
+- existing Hyper-V VM names;
+- the WHMCS service-mapping database.
+
+It never overwrites another VM just to obtain the friendly name.
+
+If no usable first name exists, the fallback is:
+
+```text
+PH-VPS-<WHMCS service ID>
+```
+
+Existing VMs are not automatically renamed.
+
+---
+
+# PenguinPanel customer usernames
+
+New WHMCS-created PenguinPanel accounts do not deliberately use customer email addresses as usernames.
+
+Current preference order:
+
+1. WHMCS client first name;
+2. existing sensible non-email WHMCS service username;
+3. `penguin-<clientId>` fallback.
+
+If the requested username already exists, PenguinPanel generates a unique client-specific variant.
+
+WHMCS-created accounts are reused when the same customer receives additional VPSes.
+
+Existing accounts are not silently renamed.
+
+---
+
+# WHMCS server connection
+
+Create a WHMCS server with:
+
+```text
+Module:   PenguinPanel Hyper-V
+Hostname: vps.penguinhosting.host
+SSL:      Enabled
+Port:     443
+```
+
+Use the PenguinPanel WHMCS API key as the module credential.
+
+Create a dedicated server group, for example:
+
+```text
+PenguinPanel VPS
+└── Virtual-Server
+```
+
+Assign VPS products to that group.
+
+---
+
+# WHMCS module settings
+
+Current v1.2.3 product settings include:
+
+| Setting | Recommended value |
+|---|---|
+| OS Template | Enabled PenguinPanel template ID |
+| CPU Cores | e.g. `4` |
+| Memory (MB) | e.g. `4096` |
+| Disk (GB) | e.g. `127` / product requirement |
+| Hyper-V Generation | `2` |
+| Secure Boot | Enabled |
+| Start After Provision | Enabled |
+| Configure Windows Guest | Enabled |
+| Windows Username | `Administrator` |
+| Template Administrator Password | Golden-template Administrator password |
+| VM Storage Root | Automatic / blank |
+| Enable FiveM Mapping | Enabled when needed |
+| FiveM Internal Port | `30120` |
+| Public RDP Port | `0` |
+| Public FiveM Port | `0` |
+| RDP Customer Hostname | `remotedesktop.penguinhosting.host` |
+
+The old `Fallback VM Name Prefix` UI slot was replaced by `RDP Customer Hostname` in v1.2.3. If an upgraded WHMCS product still shows `PH-VPS-` in that field, replace it with:
+
+```text
+remotedesktop.penguinhosting.host
+```
+
+and save the product.
+
+---
+
+# WHMCS service/client data
+
+The provisioning module stores values such as:
+
+- PenguinPanel VM name
+- Windows username
+- internal IPv4
+- public IPv4
+- RDP host
+- RDP port
+- FiveM public port
+- FiveM internal port
+- selected/provisioned storage root
+- CPU
+- RAM
+- disk
+
+The current WHMCS module also mirrors customer-email values into hidden/admin-only Product Custom Fields so Product/Service email templates can use merge fields such as:
+
+```text
+{$service_custom_field_penguinpanelvmname}
+{$service_custom_field_rdphost}
+{$service_custom_field_rdpport}
+{$service_custom_field_windowsusername}
+{$service_custom_field_internalipv4}
+{$service_custom_field_publicipv4}
+{$service_custom_field_fivemport}
+{$service_custom_field_fiveminternalport}
 ```
 
 ---
 
-## 🧪 Testing
+# WHMCS emails
 
-### Quick Test
+Included under:
 
-```bash
-cd backend
-node scripts/quick-test.js
+```text
+WHMCS/email-templates/
 ```
 
-### Full Test Suite
+Current templates include:
 
-```bash
-node scripts/test-ddos-detection.js all
+- Swedish VPS welcome email;
+- Swedish fixed-term termination email.
+
+Intended endpoint display:
+
+```text
+RDP:
+remotedesktop.penguinhosting.host:<RDP port>
+
+FiveM:
+<PublicAddress>:<FiveM public port>
+
+PenguinPanel:
+https://vps.penguinhosting.host/
 ```
 
-See `TESTING_GUIDE.md` for detailed testing instructions.
+The WHMCS product Welcome Email must be the custom PenguinPanel VPS email, not WHMCS's legacy Hosting Account Welcome Email, otherwise WHMCS may generate cPanel-style `:2082` links.
 
 ---
 
-## 🔄 Updates & Maintenance
+# WHMCS resource upgrades
 
-### Update Dependencies
+The server module implements WHMCS `ChangePackage`.
 
-```bash
-# Backend
-cd backend
-npm update
+Recommended configurable option names:
 
-# Frontend
-cd frontend
-npm update
-npm run build
+```text
+CPU Cores
+RAM
+Disk GB
 ```
 
-### Database Migrations
+Example values:
 
-The application handles database schema updates automatically. On first run, all tables are created. On subsequent starts, schema changes are applied automatically.
+```text
+CPU Cores:
+2
+4
+6
+8
 
-To manually reset the database:
+RAM:
+4096MB
+8192MB
+16384MB
+32768MB
 
-```sql
-DROP DATABASE hyperv_panel;
-CREATE DATABASE hyperv_panel;
+Disk GB:
+127
+256
+512
 ```
 
-Then restart the backend - tables will be recreated.
+Supported behavior:
 
-### Backup & Restore
+| Resource | Increase | Decrease |
+|---|---|---|
+| CPU | Yes | Yes |
+| RAM | Yes | Yes |
+| VHD/VHDX | Yes | **No** |
 
-**Backup:**
-```bash
-mysqldump -u hyperv_panel -p hyperv_panel > backup.sql
-```
+Disk shrinking is intentionally blocked.
 
-**Restore:**
-```bash
-mysql -u hyperv_panel -p hyperv_panel < backup.sql
-```
+Before VHD/VHDX expansion, PenguinPanel checks the storage safety reserve.
+
+When possible, it uses PowerShell Direct after disk expansion to extend the Windows `C:` partition.
+
+An active `.avhdx` checkpoint/differencing disk blocks automatic disk growth.
 
 ---
 
-## 🤝 Contributing
+# VPS products: 1-5 month prepaid plans
 
-Contributions are welcome! Please follow these guidelines:
+Current intended sales model is **pay the selected period up front**.
 
-1. Fork the repository
-2. Create a feature branch (`git checkout -b feature/amazing-feature`)
-3. Commit your changes (`git commit -m 'Add amazing feature'`)
-4. Push to the branch (`git push origin feature/amazing-feature`)
-5. Open a Pull Request
+Use **One Time** billing, not Monthly recurring billing.
 
-### Development Guidelines
+Example at 150 SEK/month:
 
-- Follow existing code style
-- Add comments for complex logic
-- Test thoroughly before submitting
-- Update documentation as needed
+| Product | Payment Type | Price paid now | Fixed term |
+|---|---|---:|---:|
+| VPS - 1 Månad | One Time | 150 SEK | 30 days |
+| VPS - 2 Månad | One Time | 300 SEK | 60 days |
+| VPS - 3 Månad | One Time | 450 SEK | 90 days |
+| VPS - 4 Månad | One Time | 600 SEK | 120 days |
+| VPS - 5 Månad | One Time | 750 SEK | 150 days |
 
----
+For all of these:
 
-## 📝 License
+```text
+Recurring Cycles Limit: 0
+Termination Email: PenguinPanel VPS - Avslutningsmail
+```
 
-This project is licensed under the MIT License - see the [LICENSE](LICENSE) file for details.
+`Auto Terminate/Fixed Term` is a literal number of days after activation.
 
----
+It is not a "days overdue" setting.
 
-## 🙏 Acknowledgments
-
-- **React** - Frontend framework
-- **Node.js** - Backend runtime
-- **Express** - Web framework
-- **MySQL** - Database
-- **Tailwind CSS** - UI styling
-- **Vite** - Build tool
-- **Lucide Icons** - Icon library
-- **node-powershell** - PowerShell integration
+Non-payment suspension/termination is controlled separately by WHMCS automation.
 
 ---
 
-## ⚡ Performance Tips
+# Termination behavior
 
-### For Large Deployments
+Always use the module's **Terminate** operation before simply deleting a WHMCS service record.
 
-1. **Enable VM Caching** - Reduces Hyper-V query load
-   ```sql
-   UPDATE settings SET value = '30' WHERE `key` = 'vm_cache_interval_sec';
+A plain WHMCS service deletion does not necessarily execute provisioning cleanup.
+
+PenguinPanel termination is intended to clean up:
+
+- Hyper-V VM;
+- managed VM storage;
+- WinNAT mappings;
+- related firewall/network data;
+- PenguinPanel service mapping.
+
+WHMCS-created PenguinPanel user cleanup is conservative:
+
+- the user must be safe to delete;
+- they must not own another active VPS;
+- manual/reused accounts should not be removed accidentally.
+
+---
+
+# WHMCS provisioning mode
+
+For manual control/testing use:
+
+```text
+Do not automatically setup this product
+```
+
+Then the administrator can:
+
+1. accept/create the order;
+2. review the service;
+3. choose storage if required;
+4. press **Module Commands -> Create**.
+
+Once the product is production-ready, automatic provisioning can be enabled after payment if no manual storage decision is required.
+
+---
+
+# WHMCS API
+
+Example safe configuration:
+
+```json
+"WhmcsApi": {
+  "Enabled": true,
+  "RequireHttps": true,
+  "ApiKeySha256": "GENERATE_WITH_Configure-WhmcsApi.ps1",
+  "AllowedIps": [],
+  "TrustForwardedFor": false,
+  "MaxRequestsPerMinute": 120
+}
+```
+
+Generate the API key/hash using the included configuration script.
+
+For production, consider restricting:
+
+```text
+AllowedIps
+```
+
+to the real source IP PenguinPanel sees from the WHMCS server.
+
+Do not guess the address; verify the actual source first or WHMCS can be locked out.
+
+---
+
+# Build / restore PenguinPanel
+
+1. Copy `PenguinPanel/` to the Windows Hyper-V server, for example:
+
+   ```text
+   C:\Discordbots\scripts\hyperv-panel
    ```
 
-2. **Database Indexing** - Already configured, but verify:
-   ```sql
-   SHOW INDEX FROM bandwidth_history;
+2. Copy:
+
+   ```text
+   appsettings.example.json
    ```
 
-3. **Log Rotation** - Clean up old data:
-   ```sql
-   DELETE FROM audit_logs WHERE created_at < NOW() - INTERVAL 90 DAY;
-   DELETE FROM bandwidth_history WHERE recorded_at < NOW() - INTERVAL 7 DAY;
+   to:
+
+   ```text
+   appsettings.json
    ```
 
-4. **Resource Allocation** - Increase Node.js memory:
-   ```bash
-   node --max-old-space-size=4096 server.js
+3. Fill all secrets and verify:
+   - database connection;
+   - SMTP;
+   - Guacamole auth;
+   - Panel URL;
+   - NAT/switch;
+   - public IP/hostname;
+   - internal IP range;
+   - reserved ports;
+   - RDP/FiveM ranges;
+   - VM storage roots;
+   - WHMCS API.
+
+4. Build:
+
+   ```powershell
+   cd C:\Discordbots\scripts\hyperv-panel
+   dotnet build
    ```
 
----
+5. Start/restart PenguinPanel.
 
 ---
 
-## 📊 Statistics
+# Restore WHMCS
 
-- **Backend**: ~15,000 lines of JavaScript
-- **Frontend**: ~8,000 lines of React/JSX
-- **Database**: 20+ tables
-- **API Endpoints**: 100+
-- **Supported VMs**: Unlimited
-- **Concurrent Users**: Tested with 50+
+Upload:
+
+```text
+WHMCS/modules/servers/penguinpanel/
+```
+
+to:
+
+```text
+/public_html/modules/servers/penguinpanel/
+```
+
+and:
+
+```text
+WHMCS/modules/addons/penguinpanel/
+```
+
+to:
+
+```text
+/public_html/modules/addons/penguinpanel/
+```
+
+Then:
+
+1. configure the PenguinPanel WHMCS server;
+2. test the server connection;
+3. create/select the `PenguinPanel VPS` server group;
+4. assign the VPS product to the server group;
+5. select a valid OS template;
+6. configure the module settings;
+7. select the custom Welcome Email;
+8. configure product pricing/fixed term;
+9. test with a disposable client/order before enabling automatic production provisioning.
 
 ---
 
-**Made with ❤️ for the Hyper-V community**
+# Production backup checklist
+
+This GitHub repository is intentionally **not** a full disaster-recovery backup.
+
+Keep a separate encrypted/private backup of:
+
+- production `appsettings.json`;
+- MariaDB database dump;
+- WHMCS/PenguinPanel API credentials;
+- SMTP credentials;
+- Guacamole JSON auth secret;
+- Windows golden VHD/VHDX templates;
+- production VM disks if required by your backup policy;
+- TLS/private keys where applicable.
+
+See:
+
+```text
+PRIVATE-BACKUP-CHECKLIST.md
+```
+
+for the dedicated checklist.
 
 ---
 
-*Last updated: June 2026*
+# GitHub safety
+
+Do **not** commit:
+
+```text
+appsettings.json
+*.vhd
+*.vhdx
+*.avhdx
+database dumps containing customer data
+API keys
+SMTP passwords
+Guacamole secrets
+production private keys
+```
+
+The repository includes `.gitignore` rules and a sanitized `appsettings.example.json`, but always review changes before pushing.
+
+---
+
+# Validation after restore
+
+Recommended quick test:
+
+```text
+1. dotnet build succeeds
+2. PenguinPanel starts
+3. WHMCS Test Connection succeeds
+4. /api/whmcs/catalog returns templates/storage
+5. disposable VPS Create succeeds
+6. Windows RDP listener matches allocated public RDP port
+7. WinNAT RDP mapping exists
+8. FiveM TCP + UDP mapping exists when enabled
+9. welcome email contains VM/RDP/Windows data
+10. suspend/unsuspend works
+11. ChangePackage CPU/RAM test works
+12. Terminate removes the disposable VPS
+```
+
+---
+
+# Patch history
+
+See:
+
+```text
+PATCH-HISTORY.md
+```
+
+for the condensed progression from Step 2.1 through Step 2.9.1.
+
+---
+
+## Notes
+
+This snapshot is intended to be a known restore point for the working PenguinPanel/WHMCS project.
+
+When new features are added, update:
+
+- `README.md`
+- `VERSION.txt`
+- `PATCH-HISTORY.md`
+- `WHMCS-PRODUCT-SETUP.md`
+- `FILE-MANIFEST.sha256`
+
+before creating the next release backup.

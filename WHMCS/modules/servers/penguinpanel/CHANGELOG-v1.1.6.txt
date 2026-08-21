@@ -1,0 +1,7 @@
+PenguinPanel WHMCS Server v1.1.6
+
+- Shows live free space for approved VM storage roots.
+- Adds per-service admin storage selector before Create.
+- Automatic selection stays automatic until provisioning and uses live panel free-space data.
+- Saves the actual chosen storage root back to the WHMCS service.
+- Disables manual choices that cannot fit the requested virtual disk plus safety reserve.

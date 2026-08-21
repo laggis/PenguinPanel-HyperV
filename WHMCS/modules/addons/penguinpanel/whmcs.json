@@ -1,0 +1,33 @@
+{
+  "schema": "1.0",
+  "type": "penguinpanel-addon",
+  "name": "PenguinPanel Integration",
+  "license": "MIT",
+  "category": "addon",
+  "description": {
+    "name": "PenguinPanel Integration",
+    "tagline": "WHMCS administration and diagnostics for PenguinPanel Hyper-V",
+    "long": "Companion addon for the PenguinPanel provisioning module. Provides API health, catalog information, WHMCS service summaries and integration diagnostics.",
+    "features": [
+      "PenguinPanel API health checks",
+      "Hyper-V template catalog overview",
+      "Storage-root overview",
+      "WHMCS PenguinPanel service summary",
+      "Provisioning module installation diagnostics"
+    ]
+  },
+  "support": {
+    "homepage": "https://penguinhosting.host",
+    "docs_url": "https://penguinhosting.host",
+    "support_url": "https://penguinhosting.host"
+  },
+  "authors": [
+    {
+      "name": "PenguinHosting",
+      "homepage": "https://penguinhosting.host"
+    }
+  ],
+  "logo": {
+    "filename": "logo.png"
+  }
+}

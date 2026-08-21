@@ -1,0 +1,7 @@
+PenguinPanel WHMCS Server Module v1.2.3
+
+- Moves RDP Customer Hostname into visible module setting slot 16.
+- Removes the no-longer-needed configurable VM Name Prefix setting.
+- Friendly VM naming still uses client first name; rare fallback is PH-VPS-<serviceId>.
+- Automatically treats legacy configoption16 value PH-VPS- as remotedesktop.penguinhosting.host.
+- Keeps all earlier config option positions 1-15 unchanged.

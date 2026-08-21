@@ -1,0 +1,280 @@
+@page "/templates"
+@inject PanelService Panel
+@inject UserSession Session
+@inject IJSRuntime JS
+
+<PageTitle>OS Templates</PageTitle>
+
+@if (!Session.IsLoggedIn)
+{
+    <NotSignedIn />
+}
+else if (Session.User?.IsAdmin != true)
+{
+    <section class="panel empty-state">
+        <h1>Admin area</h1>
+        <p>Only administrators can manage OS templates.</p>
+        <a class="button primary" href="">Back to dashboard</a>
+    </section>
+}
+else
+{
+    <div class="page-head">
+        <div>
+            <span class="eyebrow">Admin</span>
+            <h1>OS Templates</h1>
+            <p>Create one clean template once, then reuse it on every virtual server reinstall.</p>
+        </div>
+        <div class="button-row">
+            <button class="button" @onclick="Load" disabled="@busy">Refresh</button>
+            <a class="button" href="vms">Virtual Servers</a>
+        </div>
+    </div>
+
+    @if (!string.IsNullOrWhiteSpace(message))
+    {
+        <div class="@messageClass">@message</div>
+    }
+
+    <section class="panel">
+        <div class="panel-head">
+            <h2>Global template manager</h2>
+            <span class="muted">Available to every server</span>
+        </div>
+        <div class="notice-card">
+            <strong>Best workflow</strong>
+            <p>Prepare a clean golden VM, shut it down or let PenguinPanel stop it temporarily, then create a VHDX template. Templates enabled for clients will appear in the Reinstall tab on assigned servers.</p>
+        </div>
+
+        @if (templateInProgress)
+        {
+            <div class="restore-progress-card">
+                <strong>Creating template</strong>
+                <p>@templateStatus</p>
+                <div class="restore-progress-track">
+                    <div class="restore-progress-bar" style="width: 65%"></div>
+                </div>
+            </div>
+        }
+
+        <div class="form-grid">
+            <label>Name<input @bind="templateName" placeholder="Windows Server 2019" /></label>
+            <label>Operating system<input @bind="templateOs" placeholder="Windows" /></label>
+            <label class="full-row">Source VM for creating template
+                <select @bind="sourceVmName">
+                    <option value="">Select VM when using Create template from VM</option>
+                    @foreach (var sourceVm in vms)
+                    {
+                        <option value="@sourceVm.Name">@sourceVm.Name (@sourceVm.State)</option>
+                    }
+                </select>
+            </label>
+            <label class="full-row">Template storage folder<input @bind="templateStorageFolder" placeholder="D:\PenguinPanel\Templates" /></label>
+            <label class="full-row">Existing VHD/VHDX template path<input @bind="templateIsoPath" placeholder="D:\PenguinPanel\Templates\WindowsServer2019.vhdx" /></label>
+            <label class="full-row">Client-facing reinstall message<textarea @bind="templateNotes" placeholder="Example: Default password after reinstall: Kossa123. Please change it after first login."></textarea></label>
+            <label class="switch-row full-row"><input type="checkbox" @bind="templateEnabled" /> Enabled for clients</label>
+            <div class="form-actions full-row button-row">
+                <button class="button primary" @onclick="CreateTemplateFromSelectedVm" disabled="@(busy || string.IsNullOrWhiteSpace(sourceVmName) || string.IsNullOrWhiteSpace(templateName))">Create template from selected VM</button>
+                <button class="button" @onclick="SaveTemplate" disabled="@(busy || string.IsNullOrWhiteSpace(templateName) || string.IsNullOrWhiteSpace(templateIsoPath))">Add/update existing VHDX template</button>
+                <button class="button" @onclick="() => ClearForm()" disabled="@busy">Clear form</button>
+            </div>
+        </div>
+    </section>
+
+    <section class="panel">
+        <div class="panel-head">
+            <h2>Saved templates</h2>
+            <span class="muted">Client reinstall list</span>
+        </div>
+        @if (templates.Count == 0)
+        {
+            <div class="friendly-empty-state">
+                <div class="empty-illustration">▤</div>
+                <div>
+                    <h2>No templates yet</h2>
+                    <p>Add a VHDX template above. Once enabled, it can be selected from the Reinstall tab on any assigned virtual server.</p>
+                </div>
+            </div>
+        }
+        else
+        {
+            <table class="data-table compact-table">
+                <thead><tr><th>Name</th><th>OS</th><th>Client visible</th><th>Message shown after reinstall</th><th>Path</th><th>Actions</th></tr></thead>
+                <tbody>
+                    @foreach (var template in templates)
+                    {
+                        <tr>
+                            <td><strong>@template.Name</strong></td>
+                            <td>@template.OperatingSystem</td>
+                            <td><span class="pill">@(template.IsEnabled ? "Yes" : "No")</span></td>
+                            <td class="template-client-note-cell">@(string.IsNullOrWhiteSpace(template.Notes) ? "No message" : template.Notes)</td>
+                            <td>@template.IsoPath</td>
+                            <td class="button-row">
+                                <button class="button mini" @onclick="() => EditTemplate(template)" disabled="@busy">Edit</button>
+                                <button class="button mini danger" @onclick="() => DeleteTemplate(template.Id)" disabled="@busy">Delete</button>
+                            </td>
+                        </tr>
+                    }
+                </tbody>
+            </table>
+        }
+    </section>
+}
+
+@code {
+    private IReadOnlyList<VmTemplate> templates = [];
+    private IReadOnlyList<VmInfo> vms = [];
+    private bool busy;
+    private bool templateInProgress;
+    private string? message;
+    private string messageClass = "alert success";
+    private string templateStatus = string.Empty;
+    private string sourceVmName = string.Empty;
+    private string templateName = string.Empty;
+    private string templateOs = "Windows";
+    private string templateStorageFolder = @"D:\PenguinPanel\Templates";
+    private string templateIsoPath = string.Empty;
+    private string templateNotes = string.Empty;
+    private bool templateEnabled = true;
+
+    protected override async Task OnInitializedAsync()
+    {
+        if (Session.IsLoggedIn && Session.User?.IsAdmin == true)
+        {
+            await Load();
+        }
+    }
+
+    private async Task Load()
+    {
+        busy = true;
+        try
+        {
+            messageClass = "alert success";
+            templates = await Panel.GetVmTemplatesAsync(Session.User);
+            vms = await Panel.GetVmsAsync(Session.User);
+        }
+        catch (Exception ex)
+        {
+            messageClass = "alert";
+            message = ex.Message;
+        }
+        finally
+        {
+            busy = false;
+        }
+    }
+
+    private async Task CreateTemplateFromSelectedVm()
+    {
+        var confirmed = await JS.InvokeAsync<bool>(
+            "confirm",
+            $"Create template '{templateName}' from {sourceVmName}?\n\nPenguinPanel will temporarily stop the source VM while copying its primary virtual disk. This can take a while depending on disk size.");
+
+        if (!confirmed)
+        {
+            return;
+        }
+
+        busy = true;
+        templateInProgress = true;
+        templateStatus = $"Stopping {sourceVmName} if needed and copying the primary disk to {templateStorageFolder}...";
+        message = null;
+        messageClass = "alert success";
+        await InvokeAsync(StateHasChanged);
+
+        try
+        {
+            var result = await Panel.CreateTemplateFromVmAsync(Session.User, sourceVmName, templateName, templateOs, templateStorageFolder, templateNotes, templateEnabled);
+            templateStatus = result.Message;
+            message = $"Template saved: {result.TemplatePath}";
+            ClearForm(keepMessage: true);
+            await Load();
+        }
+        catch (Exception ex)
+        {
+            messageClass = "alert";
+            message = ex.Message;
+            templateStatus = "Template creation failed: " + ex.Message;
+        }
+        finally
+        {
+            templateInProgress = false;
+            busy = false;
+            await InvokeAsync(StateHasChanged);
+        }
+    }
+
+    private async Task SaveTemplate()
+    {
+        busy = true;
+        try
+        {
+            messageClass = "alert success";
+            var template = new VmTemplate(0, templateName, templateOs, templateIsoPath, templateNotes, templateEnabled, DateTime.UtcNow);
+            var id = await Panel.SaveVmTemplateAsync(Session.User, template);
+            message = $"Template saved. If a template with the same name already existed, it was updated instead of duplicated. ID: {id}";
+            ClearForm(keepMessage: true);
+            await Load();
+        }
+        catch (Exception ex)
+        {
+            messageClass = "alert";
+            message = ex.Message;
+        }
+        finally
+        {
+            busy = false;
+        }
+    }
+
+    private void EditTemplate(VmTemplate template)
+    {
+        templateName = template.Name;
+        templateOs = string.IsNullOrWhiteSpace(template.OperatingSystem) ? "Windows" : template.OperatingSystem;
+        templateIsoPath = template.IsoPath;
+        templateNotes = template.Notes;
+        templateEnabled = template.IsEnabled;
+    }
+
+    private async Task DeleteTemplate(long id)
+    {
+        var confirmed = await JS.InvokeAsync<bool>("confirm", "Delete this template from PenguinPanel?\n\nThe VHDX file itself is not deleted, only the saved template entry.");
+        if (!confirmed)
+        {
+            return;
+        }
+
+        busy = true;
+        try
+        {
+            await Panel.DeleteVmTemplateAsync(Session.User, id);
+            messageClass = "alert success";
+            message = "Template deleted from PenguinPanel.";
+            await Load();
+        }
+        catch (Exception ex)
+        {
+            messageClass = "alert";
+            message = ex.Message;
+        }
+        finally
+        {
+            busy = false;
+        }
+    }
+
+    private void ClearForm(bool keepMessage = false)
+    {
+        sourceVmName = string.Empty;
+        templateName = string.Empty;
+        templateOs = "Windows";
+        templateIsoPath = string.Empty;
+        templateNotes = string.Empty;
+        templateEnabled = true;
+        if (!keepMessage)
+        {
+            message = null;
+        }
+    }
+}

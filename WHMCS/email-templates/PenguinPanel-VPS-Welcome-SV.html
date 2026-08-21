@@ -1,0 +1,159 @@
+<h1>Välkommen till {$company_name}!</h1>
+
+<p>Hej {$client_name},</p>
+
+<p>Din <strong>{$service_product_name}</strong> är nu installerad och aktiverad. Din Windows VPS är redo att användas via Remote Desktop och kan hanteras i PenguinPanel.</p>
+
+<h2>Din VPS</h2>
+
+<table style="margin:22px 0;background:#12243d;border:1px solid #25476f;border-radius:16px;overflow:hidden;" border="0" width="100%" cellspacing="0" cellpadding="0">
+<tbody>
+<tr>
+<td style="padding:18px 22px;background:#081220;border-bottom:1px solid #25476f;">
+<div style="font-family:Arial,Helvetica,sans-serif;font-size:20px;font-weight:900;color:#ffffff;">Windows VPS</div>
+<div style="font-family:Arial,Helvetica,sans-serif;font-size:13px;color:#9fb4d0;margin-top:6px;">Använd uppgifterna nedan för att ansluta till din virtuella server.</div>
+</td>
+</tr>
+<tr>
+<td style="padding:22px;">
+<table style="background:#0d1b2f;border:1px solid #25476f;border-radius:12px;overflow:hidden;" border="0" width="100%" cellspacing="0" cellpadding="0">
+<tbody>
+
+<tr>
+<td style="padding:12px 14px;color:#7dd3fc;font-family:Arial,Helvetica,sans-serif;font-weight:800;width:170px;">VM-namn</td>
+<td style="padding:12px 14px;color:#ffffff;font-family:Arial,Helvetica,sans-serif;">{$service_custom_field_penguinpanelvmname}</td>
+</tr>
+
+<tr>
+<td style="padding:12px 14px;color:#7dd3fc;font-family:Arial,Helvetica,sans-serif;font-weight:800;border-top:1px solid #25476f;">RDP-adress</td>
+<td style="padding:12px 14px;color:#ffffff;font-family:Arial,Helvetica,sans-serif;border-top:1px solid #25476f;"><strong>{$service_custom_field_rdphost}:{$service_custom_field_rdpport}</strong></td>
+</tr>
+
+<tr>
+<td style="padding:12px 14px;color:#7dd3fc;font-family:Arial,Helvetica,sans-serif;font-weight:800;border-top:1px solid #25476f;">Windows-användare</td>
+<td style="padding:12px 14px;color:#ffffff;font-family:Arial,Helvetica,sans-serif;border-top:1px solid #25476f;">{$service_custom_field_windowsusername}</td>
+</tr>
+
+<tr>
+<td style="padding:12px 14px;color:#7dd3fc;font-family:Arial,Helvetica,sans-serif;font-weight:800;border-top:1px solid #25476f;">Windows-lösenord</td>
+<td style="padding:12px 14px;color:#ffffff;font-family:Arial,Helvetica,sans-serif;border-top:1px solid #25476f;">{$service_password}</td>
+</tr>
+
+<tr>
+<td style="padding:12px 14px;color:#7dd3fc;font-family:Arial,Helvetica,sans-serif;font-weight:800;border-top:1px solid #25476f;">Publik IPv4</td>
+<td style="padding:12px 14px;color:#ffffff;font-family:Arial,Helvetica,sans-serif;border-top:1px solid #25476f;">{$service_custom_field_publicipv4}</td>
+</tr>
+
+<tr>
+<td style="padding:12px 14px;color:#7dd3fc;font-family:Arial,Helvetica,sans-serif;font-weight:800;border-top:1px solid #25476f;">Intern IPv4</td>
+<td style="padding:12px 14px;color:#ffffff;font-family:Arial,Helvetica,sans-serif;border-top:1px solid #25476f;">{$service_custom_field_internalipv4}</td>
+</tr>
+
+</tbody>
+</table>
+
+<div style="font-family:Arial,Helvetica,sans-serif;font-size:12px;color:#9fb4d0;margin-top:14px;">
+Tips: I Windows Remote Desktop skriver du adressen exakt som <strong>HOSTNAMN:PORT</strong>, till exempel <strong>remotedesktop.penguinhosting.host:22000</strong>.
+</div>
+</td>
+</tr>
+</tbody>
+</table>
+
+<h2>PenguinPanel</h2>
+
+<table style="margin:22px 0;background:#12243d;border:1px solid #25476f;border-radius:16px;overflow:hidden;" border="0" width="100%" cellspacing="0" cellpadding="0">
+<tbody>
+<tr>
+<td style="padding:18px 22px;background:#081220;border-bottom:1px solid #25476f;">
+<div style="font-family:Arial,Helvetica,sans-serif;font-size:20px;font-weight:900;color:#ffffff;">PenguinPanel Kontrollpanel</div>
+<div style="font-family:Arial,Helvetica,sans-serif;font-size:13px;color:#9fb4d0;margin-top:6px;">Här hanterar du din VPS, start/stopp, nätverk, brandvägg, lösenord och andra serverfunktioner.</div>
+</td>
+</tr>
+<tr>
+<td style="padding:22px;">
+
+<table style="background:#0d1b2f;border:1px solid #25476f;border-radius:12px;overflow:hidden;" border="0" width="100%" cellspacing="0" cellpadding="0">
+<tbody>
+<tr>
+<td style="padding:12px 14px;color:#7dd3fc;font-family:Arial,Helvetica,sans-serif;font-weight:800;width:170px;">Användarnamn</td>
+<td style="padding:12px 14px;color:#ffffff;font-family:Arial,Helvetica,sans-serif;">{$service_username}</td>
+</tr>
+
+<tr>
+<td style="padding:12px 14px;color:#7dd3fc;font-family:Arial,Helvetica,sans-serif;font-weight:800;border-top:1px solid #25476f;">Lösenord</td>
+<td style="padding:12px 14px;color:#ffffff;font-family:Arial,Helvetica,sans-serif;border-top:1px solid #25476f;">{$service_password}</td>
+</tr>
+</tbody>
+</table>
+
+<div style="text-align:center;margin-top:22px;">
+<a style="display:inline-block;background:#2563eb;color:#ffffff;text-decoration:none;font-family:Arial,Helvetica,sans-serif;font-size:15px;font-weight:900;padding:13px 24px;border-radius:999px;" href="https://{$service_server_hostname}" target="_blank" rel="noopener">Öppna PenguinPanel</a>
+</div>
+
+<div style="font-family:Arial,Helvetica,sans-serif;font-size:12px;color:#637b9d;text-align:center;margin-top:14px;">
+Du kan även hitta din VPS och anslutningsinformation från ditt kundkonto hos PenguinHosting.
+</div>
+
+</td>
+</tr>
+</tbody>
+</table>
+
+{if $service_custom_field_fivemport}
+<h2>FiveM-portar</h2>
+
+<p>FiveM-portmappning är aktiverad för din VPS. FiveM använder den publika IP-adressen och den publika FiveM-porten när trafik ska nå servern från internet.</p>
+
+<table style="margin:22px 0;background:#12243d;border:1px solid #25476f;border-radius:16px;overflow:hidden;" border="0" width="100%" cellspacing="0" cellpadding="0">
+<tbody>
+<tr>
+<td style="padding:22px;">
+<table style="background:#0d1b2f;border:1px solid #25476f;border-radius:12px;overflow:hidden;" border="0" width="100%" cellspacing="0" cellpadding="0">
+<tbody>
+
+<tr>
+<td style="padding:12px 14px;color:#7dd3fc;font-family:Arial,Helvetica,sans-serif;font-weight:800;width:170px;">Publik FiveM-adress</td>
+<td style="padding:12px 14px;color:#ffffff;font-family:Arial,Helvetica,sans-serif;"><strong>{$service_custom_field_publicipv4}:{$service_custom_field_fivemport}</strong></td>
+</tr>
+
+<tr>
+<td style="padding:12px 14px;color:#7dd3fc;font-family:Arial,Helvetica,sans-serif;font-weight:800;border-top:1px solid #25476f;">Publik FiveM-port</td>
+<td style="padding:12px 14px;color:#ffffff;font-family:Arial,Helvetica,sans-serif;border-top:1px solid #25476f;">{$service_custom_field_fivemport}</td>
+</tr>
+
+<tr>
+<td style="padding:12px 14px;color:#7dd3fc;font-family:Arial,Helvetica,sans-serif;font-weight:800;border-top:1px solid #25476f;">Intern FiveM-port</td>
+<td style="padding:12px 14px;color:#ffffff;font-family:Arial,Helvetica,sans-serif;border-top:1px solid #25476f;">{$service_custom_field_fiveminternalport}</td>
+</tr>
+
+</tbody>
+</table>
+</td>
+</tr>
+</tbody>
+</table>
+{/if}
+
+<h2>Så här ansluter du</h2>
+
+<ol>
+<li>Öppna <strong>Remote Desktop Connection</strong> i Windows.</li>
+<li>Skriv <strong>{$service_custom_field_rdphost}:{$service_custom_field_rdpport}</strong>.</li>
+<li>Logga in med <strong>{$service_custom_field_windowsusername}</strong> och Windows-lösenordet ovan.</li>
+</ol>
+
+<div style="margin:24px 0;padding:16px 18px;background:#0d1b2f;border:1px solid #25476f;border-radius:12px;font-family:Arial,Helvetica,sans-serif;color:#dbeafe;">
+<strong style="color:#7dd3fc;">Spara dina uppgifter säkert</strong><br />
+Lösenordet i detta mejl är Windows-lösenordet och används även som startlösenord när ett nytt PenguinPanel-konto skapas. Om du redan hade ett PenguinPanel-konto behåller du ditt befintliga panellösenord. Dela aldrig dina inloggningsuppgifter med någon du inte litar på.
+</div>
+
+<h2>Behöver du hjälp?</h2>
+
+<p>Om du har frågor eller om något inte fungerar som det ska är du alltid välkommen att kontakta oss via supporten.</p>
+
+<div style="text-align:center;margin:24px 0;">
+<a style="display:inline-block;background:#2563eb;color:#ffffff;text-decoration:none;font-family:Arial,Helvetica,sans-serif;font-size:15px;font-weight:900;padding:13px 24px;border-radius:999px;" href="{$whmcs_url}" target="_blank" rel="noopener">Öppna kundpanelen</a>
+</div>
+
+<p>Tack för att du valde <strong>{$company_name}</strong>. Vi hoppas att du får en riktigt bra upplevelse med din VPS!</p>

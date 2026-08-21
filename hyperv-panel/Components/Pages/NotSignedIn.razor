@@ -1,0 +1,36 @@
+@implements IDisposable
+@inject UserSession Session
+
+<section class="locked-shell">
+    <div class="locked-card">
+        <div class="locked-icon">@(Session.IsRestoring || !Session.HasCheckedBrowserSession ? "↻" : "🔐")</div>
+        @if (Session.IsRestoring || !Session.HasCheckedBrowserSession)
+        {
+            <h1>Restoring your session</h1>
+            <p>Checking this browser for a saved PenguinPanel sign-in...</p>
+        }
+        else
+        {
+            <h1>Sign in required</h1>
+            <p>You need to sign in before using this page.</p>
+            <a class="button primary" href="login">Sign in</a>
+        }
+    </div>
+</section>
+
+@code {
+    protected override void OnInitialized()
+    {
+        Session.Changed += OnSessionChanged;
+    }
+
+    private void OnSessionChanged()
+    {
+        _ = InvokeAsync(StateHasChanged);
+    }
+
+    public void Dispose()
+    {
+        Session.Changed -= OnSessionChanged;
+    }
+}

@@ -1,0 +1,500 @@
+@page "/account"
+@implements IDisposable
+@inject PanelService Panel
+@inject UserSession Session
+
+<PageTitle>Account</PageTitle>
+
+@if (!Session.IsLoggedIn)
+{
+    <NotSignedIn />
+}
+else
+{
+    <div class="page-head">
+        <div>
+            <h1>Account</h1>
+            <p>Manage your login details and client sub-users.</p>
+        </div>
+        <button class="button" @onclick="Load" disabled="@busy">Refresh</button>
+    </div>
+
+    @if (!string.IsNullOrWhiteSpace(message))
+    {
+        <div class="@messageClass">@message</div>
+    }
+
+    <div class="split-grid">
+        <section class="panel form-grid">
+            <div class="panel-head full-row">
+                <h2>Your details</h2>
+            </div>
+            <label>
+                Username
+                <input value="@Session.User!.Username" disabled />
+            </label>
+            <label>
+                Email
+                <input type="email" @bind="ownEmail" autocomplete="email" placeholder="you@example.com" disabled="@busy" />
+            </label>
+            <div class="form-actions full-row">
+                <button type="button" class="button primary" @onclick="SaveOwnEmail" disabled="@busy">@(busyAction == "email" ? "Saving..." : "Save email")</button>
+            </div>
+        </section>
+
+        <section class="panel form-grid">
+            <div class="panel-head full-row">
+                <h2>Change password</h2>
+            </div>
+            <label>
+                Current password
+                <input type="password" @bind="currentPassword" autocomplete="current-password" disabled="@busy" />
+            </label>
+            <label>
+                New password
+                <input type="password" @bind="newPassword" autocomplete="new-password" disabled="@busy" />
+            </label>
+            <label>
+                Confirm new password
+                <input type="password" @bind="confirmPassword" autocomplete="new-password" disabled="@busy" />
+            </label>
+            <div class="form-actions full-row">
+                <button type="button" class="button primary" @onclick="ChangeOwnPassword" disabled="@(busy || string.IsNullOrWhiteSpace(currentPassword) || string.IsNullOrWhiteSpace(newPassword))">@(busyAction == "password" ? "Changing..." : "Change password")</button>
+            </div>
+        </section>
+    </div>
+
+    @if (CanManageTeam)
+    {
+        <section class="panel form-grid action-panel">
+            <div class="panel-head full-row">
+                <div>
+                    <h2>Create sub-user</h2>
+                    <p class="muted">Give another person limited access to your assigned servers.</p>
+                </div>
+            </div>
+            <label>
+                Username
+                <input @bind="newSubUsername" autocomplete="off" disabled="@busy" />
+            </label>
+            <label>
+                Email
+                <input type="email" @bind="newSubEmail" autocomplete="off" placeholder="helper@example.com" disabled="@busy" />
+            </label>
+            <label>
+                Temporary password
+                <div class="inline-edit stacked-inline-edit">
+                    <input type="password" @bind="newSubPassword" autocomplete="new-password" disabled="@busy" />
+                    <button type="button" class="button" @onclick="GenerateNewSubPassword" disabled="@busy">Generate</button>
+                </div>
+            </label>
+            <div class="full-row">
+                <div class="panel-head sub-head">
+                    <h2>Server access</h2>
+                    <span class="muted">Only your assigned servers can be delegated</span>
+                </div>
+                <div class="permission-grid">
+                    @foreach (var vm in vms)
+                    {
+                        <label class="permission-toggle">
+                            <input type="checkbox" checked="@newSubVmNames.Contains(vm.Name)" @onchange="args => ToggleNewSubVm(vm.Name, args.Value is bool value && value)" disabled="@busy" />
+                            <span>@vm.Name</span>
+                        </label>
+                    }
+                </div>
+            </div>
+            <div class="full-row">
+                <div class="panel-head sub-head">
+                    <h2>Permissions</h2>
+                    <span class="muted">Disabled items are not enabled on your own account</span>
+                </div>
+                <div class="permission-grid">
+                    @PermissionCheckbox("Console", newPermConsole, v => newPermConsole = v, CanGrant(p => p.CanViewConsole))
+                    @PermissionCheckbox("Resources", newPermResources, v => newPermResources = v, CanGrant(p => p.CanViewResources))
+                    @PermissionCheckbox("Access", newPermAccess, v => newPermAccess = v, CanGrant(p => p.CanViewAccess))
+                    @PermissionCheckbox("Network", newPermNetwork, v => newPermNetwork = v, CanGrant(p => p.CanViewNetwork))
+                    @PermissionCheckbox("Backups", newPermBackups, v => newPermBackups = v, CanGrant(p => p.CanViewBackups))
+                    @PermissionCheckbox("Reinstall", newPermReinstall, v => newPermReinstall = v, CanGrant(p => p.CanRequestReinstall))
+                    @PermissionCheckbox("Activity", newPermActivity, v => newPermActivity = v, CanGrant(p => p.CanViewActivity))
+                    @PermissionCheckbox("Settings", newPermSettings, v => newPermSettings = v, CanGrant(p => p.CanViewSettings))
+                    @PermissionCheckbox("Power controls", newPermPower, v => newPermPower = v, CanGrant(p => p.CanUsePowerActions))
+                </div>
+            </div>
+            <div class="form-actions full-row">
+                <button type="button" class="button primary" @onclick="CreateSubUser" disabled="@(busy || string.IsNullOrWhiteSpace(newSubUsername) || string.IsNullOrWhiteSpace(newSubPassword))">@(busyAction == "create-sub" ? "Creating..." : "Create sub-user")</button>
+            </div>
+        </section>
+
+        <section class="panel user-manager-panel">
+            <div class="panel-head">
+                <div>
+                    <h2>Sub-users</h2>
+                    <p class="muted">Adjust delegated access without contacting an administrator.</p>
+                </div>
+                <span class="pill">@subUsers.Count sub-users</span>
+            </div>
+            <div class="user-card-list">
+                @foreach (var user in subUsers)
+                {
+                    <article class="user-card">
+                        <header class="user-card-head">
+                            <div class="user-avatar">@InitialFor(user.Username)</div>
+                            <div class="user-title-block">
+                                <div class="user-title-line">
+                                    <h3>@user.Username</h3>
+                                    <span class="pill">sub-user</span>
+                                </div>
+                                <span class="muted">Created @user.CreatedAt.ToLocalTime()</span>
+                            </div>
+                            <div class="user-card-actions">
+                                <button type="button" class="danger" @onclick="() => DeleteSubUser(user.Id)" disabled="@busy">Delete</button>
+                            </div>
+                        </header>
+
+                        <div class="user-card-grid">
+                            <label>
+                                Email
+                                <input value="@EmailFor(user.Id)" @onchange="args => SaveSubUserEmail(user.Id, args.Value?.ToString() ?? string.Empty)" disabled="@busy" />
+                            </label>
+                            <label>
+                                Temporary password
+                                <div class="inline-edit stacked-inline-edit">
+                                    <input type="password" value="@ResetPasswordFor(user.Id)" @oninput="args => subResetPasswords[user.Id] = args.Value?.ToString() ?? string.Empty" disabled="@busy" />
+                                    <button type="button" class="button" @onclick="() => GenerateSubResetPassword(user.Id)" disabled="@busy">Generate</button>
+                                    <button type="button" class="button" @onclick="() => ResetSubUserPassword(user.Id)" disabled="@(busy || string.IsNullOrWhiteSpace(ResetPasswordFor(user.Id)))">Send temp</button>
+                                </div>
+                            </label>
+                        </div>
+
+                        <div class="user-section-row">
+                            <div>
+                                <h4>Server access</h4>
+                                <div class="permission-grid compact-permissions user-permissions">
+                                    @foreach (var vm in vms)
+                                    {
+                                        <label class="permission-toggle">
+                                            <input type="checkbox" checked="@SubUserHasVm(user.Id, vm.Name)" @onchange="args => ToggleSubUserVm(user.Id, vm.Name, args.Value is bool value && value)" disabled="@busy" />
+                                            <span>@vm.Name</span>
+                                        </label>
+                                    }
+                                </div>
+                            </div>
+                            <div>
+                                <h4>Permissions</h4>
+                                <div class="permission-grid compact-permissions user-permissions">
+                                    @PermissionCheckbox("Console", user.Permissions.CanViewConsole, v => UpdateSubUserPermissions(user, user.Permissions with { CanViewConsole = v }), CanGrant(p => p.CanViewConsole))
+                                    @PermissionCheckbox("Resources", user.Permissions.CanViewResources, v => UpdateSubUserPermissions(user, user.Permissions with { CanViewResources = v }), CanGrant(p => p.CanViewResources))
+                                    @PermissionCheckbox("Access", user.Permissions.CanViewAccess, v => UpdateSubUserPermissions(user, user.Permissions with { CanViewAccess = v }), CanGrant(p => p.CanViewAccess))
+                                    @PermissionCheckbox("Network", user.Permissions.CanViewNetwork, v => UpdateSubUserPermissions(user, user.Permissions with { CanViewNetwork = v }), CanGrant(p => p.CanViewNetwork))
+                                    @PermissionCheckbox("Backups", user.Permissions.CanViewBackups, v => UpdateSubUserPermissions(user, user.Permissions with { CanViewBackups = v }), CanGrant(p => p.CanViewBackups))
+                                    @PermissionCheckbox("Reinstall", user.Permissions.CanRequestReinstall, v => UpdateSubUserPermissions(user, user.Permissions with { CanRequestReinstall = v }), CanGrant(p => p.CanRequestReinstall))
+                                    @PermissionCheckbox("Activity", user.Permissions.CanViewActivity, v => UpdateSubUserPermissions(user, user.Permissions with { CanViewActivity = v }), CanGrant(p => p.CanViewActivity))
+                                    @PermissionCheckbox("Settings", user.Permissions.CanViewSettings, v => UpdateSubUserPermissions(user, user.Permissions with { CanViewSettings = v }), CanGrant(p => p.CanViewSettings))
+                                    @PermissionCheckbox("Power", user.Permissions.CanUsePowerActions, v => UpdateSubUserPermissions(user, user.Permissions with { CanUsePowerActions = v }), CanGrant(p => p.CanUsePowerActions))
+                                </div>
+                            </div>
+                        </div>
+                    </article>
+                }
+            </div>
+        </section>
+    }
+    else if (Session.User!.IsSubUser)
+    {
+        <section class="panel empty-state">
+            <h2>Sub-user account</h2>
+            <p>Your account owner controls server assignments and permissions for this login.</p>
+        </section>
+    }
+}
+
+@code {
+    private string ownEmail = "";
+    private string currentPassword = "";
+    private string newPassword = "";
+    private string confirmPassword = "";
+    private IReadOnlyList<VmInfo> vms = [];
+    private IReadOnlyList<PanelUserSummary> subUsers = [];
+    private Dictionary<long, string> subEmails = [];
+    private Dictionary<long, HashSet<string>> subVmNames = [];
+    private Dictionary<long, string> subResetPasswords = [];
+    private string newSubUsername = "";
+    private string newSubEmail = "";
+    private string newSubPassword = "";
+    private HashSet<string> newSubVmNames = new(StringComparer.OrdinalIgnoreCase);
+    private bool newPermConsole = true;
+    private bool newPermResources = false;
+    private bool newPermAccess = false;
+    private bool newPermNetwork;
+    private bool newPermBackups;
+    private bool newPermReinstall;
+    private bool newPermActivity;
+    private bool newPermSettings;
+    private bool newPermPower = true;
+    private string? message;
+    private string messageClass = "alert success";
+    private bool busy;
+    private string busyAction = "";
+
+    private bool CanManageTeam => Session.User is { IsAdmin: false, IsSubUser: false };
+
+    protected override async Task OnInitializedAsync()
+    {
+        Session.Changed += OnSessionChanged;
+        if (Session.IsLoggedIn)
+        {
+            await Load();
+        }
+    }
+
+    private async Task Load()
+    {
+        ownEmail = await Panel.GetOwnEmailAsync(Session.User);
+        vms = await Panel.GetVmsAsync(Session.User);
+
+        if (CanManageTeam)
+        {
+            subUsers = await Panel.GetClientSubUsersAsync(Session.User);
+            subEmails = subUsers.ToDictionary(item => item.Id, item => item.Email ?? string.Empty);
+            var assignments = await Panel.GetClientSubUserVmAssignmentsAsync(Session.User);
+            subVmNames = subUsers.ToDictionary(
+                item => item.Id,
+                item => assignments.Where(assignment => assignment.UserId == item.Id).Select(assignment => assignment.VmName).ToHashSet(StringComparer.OrdinalIgnoreCase));
+            ApplyGrantCapsToNewUser();
+        }
+    }
+
+    private async Task SaveOwnEmail()
+    {
+        await RunAction("email", "Saving email...", async () =>
+        {
+            await Panel.UpdateOwnEmailAsync(Session.User, ownEmail);
+            message = "Email saved.";
+            await Load();
+        });
+    }
+
+    private async Task ChangeOwnPassword()
+    {
+        await RunAction("password", "Changing password...", async () =>
+        {
+            if (newPassword != confirmPassword)
+            {
+                throw new InvalidOperationException("New password and confirmation do not match.");
+            }
+
+            await Panel.ChangeOwnPasswordAsync(Session.User, currentPassword, newPassword);
+            currentPassword = "";
+            newPassword = "";
+            confirmPassword = "";
+            message = "Password changed.";
+        });
+    }
+
+    private async Task CreateSubUser()
+    {
+        await RunAction("create-sub", "Creating sub-user...", async () =>
+        {
+            var emailSent = await Panel.CreateClientSubUserAsync(Session.User, newSubUsername, newSubPassword, newSubEmail, NewSubPermissions(), newSubVmNames.ToList());
+            message = emailSent
+                ? $"Sub-user {newSubUsername.Trim()} created and emailed."
+                : $"Sub-user {newSubUsername.Trim()} created.";
+            newSubUsername = "";
+            newSubEmail = "";
+            newSubPassword = "";
+            newSubVmNames.Clear();
+            await Load();
+        });
+    }
+
+    private async Task SaveSubUserEmail(long subUserId, string email)
+    {
+        subEmails[subUserId] = email;
+        await RunAction("sub-email", "Saving sub-user email...", async () =>
+        {
+            await Panel.UpdateClientSubUserEmailAsync(Session.User, subUserId, email);
+            message = "Sub-user email saved.";
+            await Load();
+        });
+    }
+
+    private async Task ResetSubUserPassword(long subUserId)
+    {
+        await RunAction("sub-reset", "Resetting sub-user password...", async () =>
+        {
+            var emailSent = await Panel.ResetClientSubUserPasswordAsync(Session.User, subUserId, ResetPasswordFor(subUserId));
+            subResetPasswords[subUserId] = "";
+            message = emailSent ? "Sub-user temporary password set and emailed." : "Sub-user temporary password set.";
+            await Load();
+        });
+    }
+
+    private Task UpdateSubUserPermissions(PanelUserSummary user, UserVmPermissions permissions)
+    {
+        return RunAction("sub-perms", "Updating sub-user permissions...", async () =>
+        {
+            await Panel.UpdateClientSubUserPermissionsAsync(Session.User, user.Id, permissions);
+            message = $"Permissions updated for {user.Username}.";
+            await Load();
+        });
+    }
+
+    private async Task ToggleSubUserVm(long subUserId, string vmName, bool value)
+    {
+        if (!subVmNames.TryGetValue(subUserId, out var set))
+        {
+            set = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+            subVmNames[subUserId] = set;
+        }
+
+        if (value) set.Add(vmName); else set.Remove(vmName);
+
+        await RunAction("sub-vms", "Updating server access...", async () =>
+        {
+            await Panel.SetClientSubUserVmAssignmentsAsync(Session.User, subUserId, set.ToList());
+            message = "Sub-user server access updated.";
+            await Load();
+        });
+    }
+
+    private async Task DeleteSubUser(long subUserId)
+    {
+        await RunAction("delete-sub", "Deleting sub-user...", async () =>
+        {
+            await Panel.DeleteClientSubUserAsync(Session.User, subUserId);
+            message = "Sub-user deleted.";
+            await Load();
+        });
+    }
+
+    private void ToggleNewSubVm(string vmName, bool value)
+    {
+        if (value) newSubVmNames.Add(vmName); else newSubVmNames.Remove(vmName);
+    }
+
+    private bool SubUserHasVm(long userId, string vmName) =>
+        subVmNames.TryGetValue(userId, out var set) && set.Contains(vmName);
+
+    private string EmailFor(long userId) => subEmails.TryGetValue(userId, out var value) ? value : string.Empty;
+
+    private string ResetPasswordFor(long userId) => subResetPasswords.TryGetValue(userId, out var value) ? value : string.Empty;
+
+    private void GenerateNewSubPassword() => newSubPassword = GenerateFriendlyPassword();
+
+    private void GenerateSubResetPassword(long userId) => subResetPasswords[userId] = GenerateFriendlyPassword();
+
+    private UserVmPermissions NewSubPermissions() => new(
+        newPermConsole,
+        newPermResources,
+        newPermAccess,
+        newPermNetwork,
+        newPermBackups,
+        newPermReinstall,
+        newPermActivity,
+        newPermSettings,
+        newPermPower);
+
+    private bool CanGrant(Func<UserVmPermissions, bool> selector) => Session.User is not null && selector(Session.User.EffectivePermissions);
+
+    private void ApplyGrantCapsToNewUser()
+    {
+        var allowed = Session.User?.EffectivePermissions ?? UserVmPermissions.ClientDefault;
+        newPermConsole = newPermConsole && allowed.CanViewConsole;
+        newPermResources = newPermResources && allowed.CanViewResources;
+        newPermAccess = newPermAccess && allowed.CanViewAccess;
+        newPermNetwork = newPermNetwork && allowed.CanViewNetwork;
+        newPermBackups = newPermBackups && allowed.CanViewBackups;
+        newPermReinstall = newPermReinstall && allowed.CanRequestReinstall;
+        newPermActivity = newPermActivity && allowed.CanViewActivity;
+        newPermSettings = newPermSettings && allowed.CanViewSettings;
+        newPermPower = newPermPower && allowed.CanUsePowerActions;
+    }
+
+    private async Task RunAction(string actionName, string workingMessage, Func<Task> action)
+    {
+        busy = true;
+        busyAction = actionName;
+        messageClass = "alert info";
+        message = workingMessage;
+        await InvokeAsync(StateHasChanged);
+
+        try
+        {
+            await action();
+            messageClass = "alert success";
+        }
+        catch (Exception ex)
+        {
+            messageClass = "alert";
+            message = ex.Message;
+            try { await Load(); } catch { }
+        }
+        finally
+        {
+            busy = false;
+            busyAction = "";
+        }
+    }
+
+    private RenderFragment PermissionCheckbox(string label, bool value, Action<bool> setValue, bool canGrant = true) => builder =>
+    {
+        var seq = 0;
+        builder.OpenElement(seq++, "label");
+        builder.AddAttribute(seq++, "class", "permission-toggle");
+        builder.OpenElement(seq++, "input");
+        builder.AddAttribute(seq++, "type", "checkbox");
+        builder.AddAttribute(seq++, "checked", canGrant && value);
+        builder.AddAttribute(seq++, "disabled", busy || !canGrant);
+        builder.AddAttribute(seq++, "onchange", EventCallback.Factory.Create<ChangeEventArgs>(this, args => setValue(args.Value is bool boolValue && boolValue)));
+        builder.CloseElement();
+        builder.OpenElement(seq++, "span");
+        builder.AddContent(seq++, label);
+        builder.CloseElement();
+        builder.CloseElement();
+    };
+
+    private RenderFragment PermissionCheckbox(string label, bool value, Func<bool, Task> setValue, bool canGrant = true) => builder =>
+    {
+        var seq = 0;
+        builder.OpenElement(seq++, "label");
+        builder.AddAttribute(seq++, "class", "permission-toggle");
+        builder.OpenElement(seq++, "input");
+        builder.AddAttribute(seq++, "type", "checkbox");
+        builder.AddAttribute(seq++, "checked", canGrant && value);
+        builder.AddAttribute(seq++, "disabled", busy || !canGrant);
+        builder.AddAttribute(seq++, "onchange", EventCallback.Factory.Create<ChangeEventArgs>(this, async args => await setValue(args.Value is bool boolValue && boolValue)));
+        builder.CloseElement();
+        builder.OpenElement(seq++, "span");
+        builder.AddContent(seq++, label);
+        builder.CloseElement();
+        builder.CloseElement();
+    };
+
+    private static string InitialFor(string username) => string.IsNullOrWhiteSpace(username) ? "?" : username.Trim()[0].ToString().ToUpperInvariant();
+
+    private static string GenerateFriendlyPassword()
+    {
+        const string alphabet = "ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz23456789!@$%";
+        var bytes = System.Security.Cryptography.RandomNumberGenerator.GetBytes(18);
+        var chars = bytes.Select(item => alphabet[item % alphabet.Length]).ToArray();
+        return new string(chars);
+    }
+
+    private void OnSessionChanged()
+    {
+        _ = InvokeAsync(async () =>
+        {
+            if (Session.IsLoggedIn)
+            {
+                await Load();
+            }
+
+            StateHasChanged();
+        });
+    }
+
+    public void Dispose()
+    {
+        Session.Changed -= OnSessionChanged;
+    }
+}

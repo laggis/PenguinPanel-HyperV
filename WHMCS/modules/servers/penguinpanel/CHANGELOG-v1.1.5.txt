@@ -1,0 +1,8 @@
+PenguinPanel WHMCS Server Module v1.1.5
+
+- VM Storage Root is now shown in Simple Mode so its API Loader renders as a selectable list.
+- Storage choices are loaded live from /api/whmcs/catalog.
+- The current PenguinPanel default root is labelled clearly.
+- CreateAccount validates the selected root against the approved catalog roots before provisioning.
+- Blank/Automatic resolves to PenguinPanel default storage root.
+- Physical storage paths remain admin-side; do not expose them as customer configurable options.

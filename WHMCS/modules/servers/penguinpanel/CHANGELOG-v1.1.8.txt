@@ -1,0 +1,7 @@
+PenguinPanel WHMCS Server Module v1.1.8
+
+- New PenguinPanel customer accounts now prefer the WHMCS client's First Name as the requested panel username.
+- Email addresses are still never deliberately used as PenguinPanel usernames.
+- If the first name is already taken, PenguinPanel's existing account-resolution logic automatically generates a unique variant such as FirstName-1234.
+- If First Name is unavailable, a sensible existing non-email WHMCS service username is reused; otherwise the privacy-safe penguin-<clientId> fallback remains.
+- The actual username returned by PenguinPanel is still saved into the WHMCS service Username field after successful provisioning.

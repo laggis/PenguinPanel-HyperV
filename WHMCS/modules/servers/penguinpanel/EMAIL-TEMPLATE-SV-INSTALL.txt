@@ -1,0 +1,21 @@
+PenguinPanel VPS welcome email - v1.2.2
+
+1. Update the PenguinPanel WHMCS server module to v1.2.2.
+2. In the VPS product -> Module Settings, set RDP Customer Hostname to:
+   remotedesktop.penguinhosting.host
+   (or a DNS-only direct hostname such as rdp.penguinhosting.host if the remotedesktop hostname is proxied/tunneled).
+3. For an existing provisioned service, open its WHMCS client/admin service page once after updating.
+   The module will mirror current PenguinPanel values into hidden Product Custom Fields.
+4. Go to System Settings -> Email Templates and edit your Product/Service welcome email.
+5. Switch to HTML/source mode and paste EMAIL-TEMPLATE-SV.html.
+6. Assign that email under Product -> Details -> Welcome Email.
+
+The module manages these custom fields automatically; do not expose them on the order form:
+- PenguinPanel VM Name
+- RDP Host
+- RDP Port
+- Windows Username
+- Internal IPv4
+- Public IPv4
+- FiveM Port
+- FiveM Internal Port

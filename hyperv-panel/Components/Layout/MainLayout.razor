@@ -1,0 +1,185 @@
+@inherits LayoutComponentBase
+@implements IDisposable
+@inject UserSession Session
+@inject PanelService Panel
+@inject IJSRuntime JS
+@inject NavigationManager Navigation
+
+@if (ShouldUseStandaloneAuthShell)
+{
+    <article class="standalone-auth-content">
+        @if (IsLoginPage)
+        {
+            @Body
+        }
+        else
+        {
+            <Login />
+        }
+    </article>
+}
+else
+{
+    <div class="page">
+        <div class="sidebar">
+            <NavMenu />
+        </div>
+
+        <main>
+            <div class="top-row">
+                <div class="top-brandline">
+                    <span class="dot-live"></span>
+                    <span>@TopStatusText</span>
+                </div>
+                <div class="top-icons">
+                    <button type="button" title="Search / virtual servers" @onclick='() => NavigateTop("vms")'>⌕</button>
+                    <button type="button" title="Dashboard" @onclick='() => NavigateTop("")'>▦</button>
+                    <button type="button" title="Settings" @onclick='() => NavigateTop(Session.User?.IsAdmin == true ? "settings" : "vms")'>⚙</button>
+                </div>
+                <span class="signed-in">@SignedInText</span>
+            </div>
+
+            <article class="content">
+                @Body
+            </article>
+        </main>
+
+        @if (Session.User?.MustChangePassword == true)
+        {
+            <div class="force-password-backdrop">
+                <section class="force-password-panel">
+                    <div class="panel-head">
+                        <div>
+                            <span class="eyebrow">Temporary password</span>
+                            <h2>Choose a new password</h2>
+                            <p class="muted">You signed in with a temporary password. Set a new one before using the panel.</p>
+                        </div>
+                    </div>
+
+                    @if (!string.IsNullOrWhiteSpace(passwordChangeMessage))
+                    {
+                        <div class="@passwordChangeMessageClass">@passwordChangeMessage</div>
+                    }
+
+                    <label>
+                        New password
+                        <input type="password" @bind="requiredNewPassword" autocomplete="new-password" />
+                    </label>
+                    <label>
+                        Confirm new password
+                        <input type="password" @bind="requiredConfirmPassword" autocomplete="new-password" />
+                    </label>
+                    <button type="button" class="button primary login-submit" @onclick="CompleteRequiredPasswordChange" disabled="@(passwordChangeBusy || string.IsNullOrWhiteSpace(requiredNewPassword))">
+                        @(passwordChangeBusy ? "Saving..." : "Change password")
+                    </button>
+                </section>
+            </div>
+        }
+    </div>
+}
+
+<div id="blazor-error-ui" data-nosnippet>
+    An unhandled error has occurred.
+    <a href="." class="reload">Reload</a>
+    <span class="dismiss">x</span>
+</div>
+
+@code {
+    private bool IsLoginPage
+    {
+        get
+        {
+            var path = Navigation.ToBaseRelativePath(Navigation.Uri).Split('?', '#')[0].Trim('/');
+            return string.Equals(path, "login", StringComparison.OrdinalIgnoreCase);
+        }
+    }
+
+    private bool ShouldUseStandaloneAuthShell => IsLoginPage || !Session.IsLoggedIn;
+    private string requiredNewPassword = "";
+    private string requiredConfirmPassword = "";
+    private string? passwordChangeMessage;
+    private string passwordChangeMessageClass = "alert";
+    private bool passwordChangeBusy;
+
+    private string TopStatusText => Session.IsRestoring
+        ? "Restoring session"
+        : Session.IsLoggedIn ? "Panel online" : "PenguinPanel local mode";
+
+    private string SignedInText => Session.IsRestoring
+        ? "Checking sign in..."
+        : Session.IsLoggedIn ? $"Signed in as {Session.User!.Username}" : "Not signed in";
+
+    protected override void OnInitialized()
+    {
+        Session.Changed += OnSessionChanged;
+        Navigation.LocationChanged += OnLocationChanged;
+    }
+
+    protected override async Task OnAfterRenderAsync(bool firstRender)
+    {
+        if (firstRender)
+        {
+            await Session.RestoreFromBrowserAsync(Panel, JS);
+        }
+
+        if (!IsLoginPage && !Session.IsLoggedIn && Session.HasCheckedBrowserSession && !Session.IsRestoring)
+        {
+            Navigation.NavigateTo("/login", replace: true);
+        }
+    }
+
+    private void NavigateTop(string path)
+    {
+        Navigation.NavigateTo("/" + path.TrimStart('/'));
+    }
+
+    private async Task CompleteRequiredPasswordChange()
+    {
+        if (passwordChangeBusy)
+        {
+            return;
+        }
+
+        passwordChangeBusy = true;
+        passwordChangeMessage = null;
+
+        try
+        {
+            if (requiredNewPassword != requiredConfirmPassword)
+            {
+                passwordChangeMessageClass = "alert";
+                passwordChangeMessage = "New password and confirmation do not match.";
+                return;
+            }
+
+            var updatedUser = await Panel.CompleteRequiredPasswordChangeAsync(Session.User, requiredNewPassword);
+            requiredNewPassword = "";
+            requiredConfirmPassword = "";
+            passwordChangeMessageClass = "alert success";
+            passwordChangeMessage = "Password changed.";
+            Session.UpdateUser(updatedUser);
+        }
+        catch (Exception ex)
+        {
+            passwordChangeMessageClass = "alert";
+            passwordChangeMessage = ex.Message;
+        }
+        finally
+        {
+            passwordChangeBusy = false;
+        }
+    }
+
+    private void OnSessionChanged() => InvokeAsync(StateHasChanged);
+
+    private void OnLocationChanged(object? sender, Microsoft.AspNetCore.Components.Routing.LocationChangedEventArgs e)
+    {
+        _ = InvokeAsync(StateHasChanged);
+    }
+
+    public void Dispose()
+    {
+        Session.Changed -= OnSessionChanged;
+        Navigation.LocationChanged -= OnLocationChanged;
+    }
+}

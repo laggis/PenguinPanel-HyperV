@@ -1,0 +1,314 @@
+@page "/"
+@implements IDisposable
+@inject PanelService Panel
+@inject UserSession Session
+
+<PageTitle>Dashboard</PageTitle>
+
+@if (!Session.IsLoggedIn)
+{
+    <NotSignedIn />
+}
+else
+{
+    <div class="page-head">
+        <div>
+            <h1>@(Session.User!.IsAdmin ? "Dashboard" : "Your servers")</h1>
+            <p>@(Session.User!.IsAdmin ? "Penguin-powered virtual server overview with quick controls." : "Your assigned virtual servers, access details, and quick controls.")</p>
+        </div>
+        <button class="button" @onclick="Load">Refresh</button>
+    </div>
+
+    @if (!string.IsNullOrWhiteSpace(message))
+    {
+        <div class="@messageClass">@message</div>
+    }
+
+    <div class="metric-grid">
+        <div class="metric">
+            <span>@(Session.User!.IsAdmin ? "Virtual servers" : "Assigned servers")</span>
+            <strong>@vms.Count</strong>
+        </div>
+        <div class="metric">
+            <span>Running</span>
+            <strong>@vms.Count(vm => IsRunning(vm.State))</strong>
+        </div>
+        <div class="metric">
+            <span>Stopped</span>
+            <strong>@vms.Count(vm => IsStopped(vm.State))</strong>
+        </div>
+        <div class="metric">
+            <span>Memory assigned</span>
+            <strong>@FormatBytes(vms.Sum(vm => vm.MemoryAssigned))</strong>
+        </div>
+    </div>
+
+    @if (Session.User!.IsAdmin)
+    {
+        <section class="panel">
+            <div class="panel-head">
+                <div>
+                    <h2>Host node health</h2>
+                    <p class="muted">CPU, memory, disk, Hyper-V service, and VM count from the Windows host.</p>
+                </div>
+                <span class="pill">@(hostStatus is null ? "Unavailable" : $"Updated {hostStatus.UpdatedAt.ToLocalTime():HH:mm:ss}")</span>
+            </div>
+
+            @if (hostStatus is null)
+            {
+                <div class="notice-card compact-notice">Host status could not be read. Make sure the app runs on the Hyper-V host with permission to query Hyper-V and CIM.</div>
+            }
+            else
+            {
+                <div class="metric-grid host-health-grid">
+                    <div class="metric"><span>Host CPU</span><strong>@hostStatus.CpuPercent.ToString("0.#")%</strong></div>
+                    <div class="metric"><span>RAM used</span><strong>@FormatBytes(hostStatus.MemoryUsedBytes) / @FormatBytes(hostStatus.MemoryTotalBytes)</strong></div>
+                    <div class="metric"><span>Disk free</span><strong>@FormatBytes(hostStatus.DiskFreeBytes)</strong></div>
+                    <div class="metric"><span>Hyper-V service</span><strong>@hostStatus.HyperVServiceStatus</strong></div>
+                    <div class="metric"><span>Running VMs</span><strong>@hostStatus.RunningVmCount</strong></div>
+                    <div class="metric"><span>Stopped VMs</span><strong>@hostStatus.StoppedVmCount</strong></div>
+                </div>
+            }
+        </section>
+    }
+
+    @if (!Session.User!.IsAdmin)
+    {
+        <section class="customer-server-grid">
+            @if (vms.Count == 0)
+            {
+                <div class="panel empty-state">
+                    <h2>No servers assigned</h2>
+                    <p>No virtual machines are assigned to this account yet. Ask an admin to assign one in User Manager.</p>
+                </div>
+            }
+            else
+            {
+                @foreach (var vm in vms)
+                {
+                    <article class="customer-server-card">
+                        <div class="customer-server-top">
+                            <div>
+                                <span class="eyebrow">Virtual server</span>
+                                <h2>@vm.Name</h2>
+                            </div>
+                            <span class="status-chip @StateClass(vm.State)">@PrettyState(vm.State)</span>
+                        </div>
+                        <div class="server-info-grid compact-info-grid">
+                            <div><span>CPU</span><strong>@vm.CpuUsage%</strong></div>
+                            <div><span>Memory</span><strong>@FormatBytes(vm.MemoryAssigned)</strong></div>
+                            <div><span>Uptime</span><strong>@FormatUptime(vm.Uptime)</strong></div>
+                            <div><span>RDP</span><strong>@RdpText(AccessFor(vm.Name))</strong></div>
+                        </div>
+                        <div class="access-summary">
+                            <span>Username</span>
+                            <strong>@(string.IsNullOrWhiteSpace(AccessFor(vm.Name).Username) ? "Not set" : AccessFor(vm.Name).Username)</strong>
+                        </div>
+                        <div class="button-row customer-card-actions">
+                            <a class="button primary" href="@ServerHref(vm.Name)">Manage</a>
+                            @if (CanUsePowerActions())
+                            {
+                                <button @onclick='() => Run("start", vm.Name)'>Start</button>
+                                <button class="danger" @onclick='() => Run("stop", vm.Name)'>Stop</button>
+                                <button @onclick='() => Run("restart", vm.Name)'>Restart</button>
+                            }
+                        </div>
+                    </article>
+                }
+            }
+        </section>
+    }
+    else
+    {
+        <section class="panel">
+            <div class="panel-head">
+                <h2>Recent virtual servers</h2>
+                <a href="vms">View all</a>
+            </div>
+
+            @if (vms.Count == 0)
+            {
+                <div class="friendly-empty-state">
+                    <div class="empty-illustration">☁</div>
+                    <div>
+                        <h3>No virtual servers yet</h3>
+                        <p>Your virtual servers will appear here as soon as they are available. Click refresh to check again, or open the server list to manage assignments.</p>
+                        <div class="button-row empty-actions">
+                            <button class="button primary" @onclick="Load">Refresh servers</button>
+                            <a class="button" href="vms">Open server list</a>
+                        </div>
+                    </div>
+                </div>
+            }
+            else
+            {
+                <table class="data-table">
+                    <thead>
+                        <tr>
+                            <th>Server</th>
+                            <th>State</th>
+                            <th>CPU</th>
+                            <th>Memory</th>
+                            <th>RDP</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        @foreach (var vm in vms.Take(10))
+                        {
+                            <tr>
+                                <td><a class="server-link" href="@ServerHref(vm.Name)">@vm.Name</a></td>
+                                <td><span class="pill @StateClass(vm.State)">@PrettyState(vm.State)</span></td>
+                                <td>@vm.CpuUsage%</td>
+                                <td>@FormatBytes(vm.MemoryAssigned)</td>
+                                <td>@RdpText(AccessFor(vm.Name))</td>
+                            </tr>
+                        }
+                    </tbody>
+                </table>
+            }
+        </section>
+    }
+}
+
+@code {
+    private IReadOnlyList<VmInfo> vms = [];
+    private HostNodeStatus? hostStatus;
+    private readonly Dictionary<string, VmAccessInfo> accessInfo = new(StringComparer.OrdinalIgnoreCase);
+    private string? message;
+    private string messageClass = "alert success";
+
+    private static string ServerHref(string vmName) => $"server?vm={Uri.EscapeDataString(vmName)}";
+
+    protected override async Task OnInitializedAsync()
+    {
+        Session.Changed += OnSessionChanged;
+
+        if (Session.IsLoggedIn)
+        {
+            await Load();
+        }
+    }
+
+    private async Task Load()
+    {
+        message = null;
+        vms = await Panel.GetVmsAsync(Session.User);
+        hostStatus = null;
+        if (Session.User?.IsAdmin == true)
+        {
+            try
+            {
+                hostStatus = await Panel.GetHostNodeStatusAsync(Session.User);
+            }
+            catch
+            {
+                hostStatus = null;
+            }
+        }
+
+        accessInfo.Clear();
+        foreach (var vm in vms)
+        {
+            try
+            {
+                accessInfo[vm.Name] = await Panel.GetVmAccessInfoAsync(Session.User, vm.Name);
+            }
+            catch
+            {
+                // Do not break dashboard if one VM access row is bad.
+            }
+        }
+    }
+
+    private VmAccessInfo AccessFor(string vmName) => accessInfo.TryGetValue(vmName, out var info)
+        ? info
+        : new VmAccessInfo(vmName, string.Empty, string.Empty, 3389, null, "Administrator", string.Empty, string.Empty, string.Empty, DateTime.UtcNow);
+
+    private bool CanUsePowerActions() => Session.User?.EffectivePermissions.CanUsePowerActions == true;
+
+    private async Task Run(string action, string vmName)
+    {
+        if (!CanUsePowerActions())
+        {
+            messageClass = "alert";
+            message = "Power controls are not enabled for your account.";
+            return;
+        }
+
+        try
+        {
+            await Panel.VmActionAsync(Session.User, action, vmName);
+            messageClass = "alert success";
+            message = $"{action} sent to {vmName}.";
+            await Load();
+            message = $"{action} sent to {vmName}.";
+        }
+        catch (Exception ex)
+        {
+            messageClass = "alert";
+            message = ex.Message;
+        }
+    }
+
+    private static string RdpText(VmAccessInfo info)
+    {
+        var host = !string.IsNullOrWhiteSpace(info.IpAddress) ? info.IpAddress : info.Hostname;
+        if (string.IsNullOrWhiteSpace(host)) return "Not set";
+        return info.RdpPort is null or <= 0 ? host : $"{host}:{info.RdpPort}";
+    }
+
+    private static bool IsRunning(string state) => state == "2" || state.Contains("Running", StringComparison.OrdinalIgnoreCase);
+
+    private static bool IsStopped(string state) => state == "3" || state.Contains("Off", StringComparison.OrdinalIgnoreCase) || state.Contains("Stopped", StringComparison.OrdinalIgnoreCase);
+
+    private static string StateClass(string state)
+    {
+        if (IsRunning(state)) return "online";
+        if (IsStopped(state)) return "offline";
+        return "warning";
+    }
+
+    private static string PrettyState(string state) => state switch
+    {
+        "2" => "Running",
+        "3" => "Off",
+        "32768" => "Paused",
+        "32769" => "Suspended",
+        _ => state
+    };
+
+    private static string FormatUptime(TimeSpan value) => value == TimeSpan.Zero ? "-" : $"{(int)value.TotalDays}d {value.Hours}h {value.Minutes}m";
+
+    private static string FormatBytes(long bytes)
+    {
+        if (bytes <= 0) return "0 B";
+        string[] units = ["B", "KB", "MB", "GB", "TB"];
+        var value = (double)bytes;
+        var unit = 0;
+        while (value >= 1024 && unit < units.Length - 1)
+        {
+            value /= 1024;
+            unit++;
+        }
+
+        return $"{value:0.#} {units[unit]}";
+    }
+
+    private void OnSessionChanged()
+    {
+        _ = InvokeAsync(async () =>
+        {
+            if (Session.IsLoggedIn)
+            {
+                await Load();
+            }
+
+            StateHasChanged();
+        });
+    }
+
+    public void Dispose()
+    {
+        Session.Changed -= OnSessionChanged;
+    }
+}

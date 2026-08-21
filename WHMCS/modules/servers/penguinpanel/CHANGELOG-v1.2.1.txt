@@ -1,0 +1,7 @@
+PenguinPanel WHMCS Server Module v1.2.1
+
+- New VPS VM names use the WHMCS client First Name by default.
+- Configurable option "VM Name" still overrides the automatic name.
+- If the first-name VM already exists, PenguinPanel Step 2.9 safely appends the WHMCS service ID.
+- Fallback remains PH-VPS-<serviceId> when no usable first name is available.
+- VM-name sanitization preserves Unicode letters, including Swedish characters.

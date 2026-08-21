@@ -1,0 +1,25 @@
+<Project Sdk="Microsoft.NET.Sdk.Web">
+
+  <PropertyGroup>
+    <TargetFramework>net10.0</TargetFramework>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <BlazorDisableThrowNavigationException>true</BlazorDisableThrowNavigationException>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <!-- Keep the guest agent as a separate project.
+         The Web SDK compiles .cs files recursively by default, so without these exclusions
+         the panel tries to compile PenguinGuestAgent/Program.cs and its obj files too. -->
+    <Compile Remove="PenguinGuestAgent\**\*.cs" />
+    <Content Remove="PenguinGuestAgent\**\*" />
+    <EmbeddedResource Remove="PenguinGuestAgent\**\*" />
+    <None Remove="PenguinGuestAgent\**\*" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <PackageReference Include="BCrypt.Net-Next" Version="4.2.0" />
+    <PackageReference Include="MySqlConnector" Version="2.4.0" />
+  </ItemGroup>
+
+</Project>

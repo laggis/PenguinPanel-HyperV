@@ -1,0 +1,39 @@
+{
+  "schema": "1.0",
+  "type": "penguinpanel-servers",
+  "name": "PenguinPanel",
+  "license": "MIT",
+  "category": "provisioning",
+  "description": {
+    "name": "PenguinPanel Hyper-V",
+    "tagline": "Provision Hyper-V VPS services through the PenguinPanel WHMCS API",
+    "long": "A WHMCS provisioning module for PenguinPanel. WHMCS communicates only with PenguinPanel's authenticated HTTPS provisioning API and never receives direct Hyper-V or PowerShell access.",
+    "features": [
+      "Automatic Hyper-V VPS provisioning",
+      "Automatic RDP and internal IPv4 allocation",
+      "Optional FiveM TCP and UDP mappings",
+      "Suspend, unsuspend and terminate automation",
+      "Live VPS status in the client and admin areas",
+      "Dynamic OS template and storage-root loading with live free-space data",
+      "Per-service pre-provision storage selection and automatic safest-drive placement",
+      "Privacy-safe, recognizable panel usernames based on the WHMCS client first name",
+      "Paid VPS resource upgrades/downgrades through WHMCS ChangePackage",
+      "Client-area upgrade and support shortcuts"
+    ]
+  },
+  "support": {
+    "homepage": "https://penguinhosting.host",
+    "docs_url": "https://penguinhosting.host",
+    "support_url": "https://penguinhosting.host"
+  },
+  "authors": [
+    {
+      "name": "PenguinHosting",
+      "homepage": "https://penguinhosting.host"
+    }
+  ],
+  "logo": {
+    "filename": "logo.png"
+  },
+  "version": "1.2.3"
+}

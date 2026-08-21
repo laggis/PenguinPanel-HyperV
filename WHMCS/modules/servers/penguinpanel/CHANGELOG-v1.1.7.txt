@@ -1,0 +1,8 @@
+PenguinPanel WHMCS Server Module v1.1.7
+
+- Privacy-safe PenguinPanel usernames.
+- No longer uses the WHMCS client email address as the default PenguinPanel username.
+- Reuses an existing non-email WHMCS service Username when supplied.
+- Otherwise generates a stable `penguin-<clientId>` login.
+- The returned PenguinPanel login is saved to the WHMCS service Username field as before.
+- Existing already-created PenguinPanel accounts are not automatically renamed.

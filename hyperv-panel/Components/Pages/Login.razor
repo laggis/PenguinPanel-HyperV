@@ -1,0 +1,283 @@
+@page "/login"
+@inject PanelService Panel
+@inject UserSession Session
+@inject NavigationManager Navigation
+@inject IJSRuntime JS
+
+<PageTitle>Sign in - PenguinPanel</PageTitle>
+
+<section class="login-shell">
+    <div class="login-glow login-glow-one"></div>
+    <div class="login-glow login-glow-two"></div>
+
+    <div class="login-stage login-stage-single">
+        <form class="login-card login-card-clean" @onsubmit="LoginAsync" @onsubmit:preventDefault="true" autocomplete="on">
+            <div class="login-card-head login-card-head-clean">
+                <div class="login-logo-row login-logo-row-centered">
+                    <div class="login-logo">PG</div>
+                    <div>
+                        <strong>🐧 PenguinPanel</strong>
+                        <span>Virtual server panel</span>
+                    </div>
+                </div>
+                <span class="eyebrow">Welcome back</span>
+                <h2>Sign in to your panel</h2>
+                <p>Use the account details provided by your administrator.</p>
+            </div>
+
+            @if (!interactiveReady)
+            {
+                <div class="alert success">Preparing secure sign-in...</div>
+            }
+            else if (Session.IsRestoring)
+            {
+                <div class="alert success">Checking saved browser session...</div>
+            }
+
+            @if (!string.IsNullOrWhiteSpace(error))
+            {
+                <div class="alert">@error</div>
+            }
+
+            @if (!string.IsNullOrWhiteSpace(recoveryMessage))
+            {
+                <div class="@recoveryMessageClass">@recoveryMessage</div>
+            }
+
+            <label class="login-field" for="penguin-login-username">
+                <span>Username</span>
+                <div class="login-input-wrap">
+                    <span aria-hidden="true">👤</span>
+                    <input id="penguin-login-username" name="username" @bind="username" @bind:event="oninput" autocomplete="username" autofocus disabled="@(!FormReady)" />
+                </div>
+            </label>
+
+            <label class="login-field" for="penguin-login-password">
+                <span>Password</span>
+                <div class="login-input-wrap">
+                    <span aria-hidden="true">🔒</span>
+                    <input id="penguin-login-password" name="password" type="password" @bind="password" @bind:event="oninput" autocomplete="current-password" disabled="@(!FormReady)" />
+                </div>
+            </label>
+
+            <div class="login-secondary-actions">
+                <button class="button ghost" type="button" @onclick="ToggleRecovery" disabled="@(busy || !interactiveReady)">
+                    @(showRecovery ? "Back to sign in" : "Forgot password?")
+                </button>
+            </div>
+
+            @if (showRecovery)
+            {
+                <div class="recovery-box">
+                    <label class="login-field" for="penguin-recovery-username">
+                        <span>Recovery username</span>
+                        <div class="login-input-wrap">
+                            <span aria-hidden="true">?</span>
+                            <input id="penguin-recovery-username" name="recoveryUsername" @bind="recoveryUsername" @bind:event="oninput" autocomplete="username" disabled="@(busy || !interactiveReady)" />
+                        </div>
+                    </label>
+                    <button class="button recovery-submit" type="button" @onclick="RequestRecoveryAsync" disabled="@(busy || !interactiveReady)">
+                        @(busyAction == "recovery" ? "Sending request..." : "Send recovery request")
+                    </button>
+                </div>
+            }
+
+            <label class="remember-row">
+                <input type="checkbox" @bind="rememberMe" disabled="@(!FormReady)" />
+                <span>Keep me signed in on this browser</span>
+            </label>
+
+            <button class="button primary login-submit" type="submit" disabled="@(busy || !FormReady)">
+                @LoginButtonText
+            </button>
+
+            <p class="login-help">Need access? Ask an administrator to create or reset your account.</p>
+        </form>
+    </div>
+</section>
+
+@code {
+    private string username = string.Empty;
+    private string password = string.Empty;
+    private string? error;
+    private string? recoveryMessage;
+    private string recoveryMessageClass = "alert success";
+    private bool busy;
+    private string busyAction = "";
+    private bool rememberMe = true;
+    private bool showRecovery;
+    private string recoveryUsername = string.Empty;
+    private bool interactiveReady;
+
+    private bool FormReady => interactiveReady && !Session.IsRestoring;
+
+    private string LoginButtonText => !interactiveReady
+        ? "Preparing sign in..."
+        : Session.IsRestoring
+            ? "Checking session..."
+            : busyAction == "login" ? "Signing in..." : "Sign in";
+
+    protected override async Task OnAfterRenderAsync(bool firstRender)
+    {
+        if (firstRender)
+        {
+            try
+            {
+                await Session.RestoreFromBrowserAsync(Panel, JS);
+                if (Session.IsLoggedIn)
+                {
+                    Navigation.NavigateTo("/", replace: true);
+                    return;
+                }
+            }
+            finally
+            {
+                interactiveReady = true;
+                await InvokeAsync(StateHasChanged);
+            }
+        }
+    }
+
+    private async Task LoginAsync()
+    {
+        if (busy || !FormReady)
+        {
+            return;
+        }
+
+        busy = true;
+        busyAction = "login";
+        error = null;
+        recoveryMessage = null;
+
+        try
+        {
+            await SyncBrowserFilledFieldsAsync();
+
+            var cleanUsername = username.Trim();
+            var cleanPassword = password;
+            if (string.IsNullOrWhiteSpace(cleanUsername) || string.IsNullOrWhiteSpace(cleanPassword))
+            {
+                error = "Please enter both username and password.";
+                return;
+            }
+
+            var user = await WithTimeout(Panel.LoginAsync(cleanUsername, cleanPassword), TimeSpan.FromSeconds(15), "The sign-in request timed out. Please try again.");
+            if (user is null)
+            {
+                error = "Wrong username or password.";
+                return;
+            }
+
+            string? token = null;
+            if (rememberMe)
+            {
+                token = await WithTimeout(Panel.CreateSessionTokenAsync(user), TimeSpan.FromSeconds(10), "The browser session could not be created. Please try again.");
+                await WithTimeout(JS.InvokeVoidAsync("localStorage.setItem", UserSession.BrowserTokenKey, token).AsTask(), TimeSpan.FromSeconds(5), "Your browser blocked saved sign-in storage. Uncheck 'Keep me signed in' and try again.");
+            }
+            else
+            {
+                await WithTimeout(JS.InvokeVoidAsync("localStorage.removeItem", UserSession.BrowserTokenKey).AsTask(), TimeSpan.FromSeconds(5), "Your browser blocked saved sign-in storage. Refresh the page and try again.");
+            }
+
+            Session.SignIn(user, token);
+            Navigation.NavigateTo("/", replace: true);
+        }
+        catch (Exception ex)
+        {
+            error = $"Login failed: {ex.Message}";
+        }
+        finally
+        {
+            busy = false;
+            busyAction = "";
+        }
+    }
+
+    private async Task SyncBrowserFilledFieldsAsync()
+    {
+        try
+        {
+            var fields = await WithTimeout(JS.InvokeAsync<Dictionary<string, string>>("penguinPanelLogin.readFields").AsTask(), TimeSpan.FromSeconds(2), "Could not read the login form.");
+            if (fields.TryGetValue("username", out var browserUsername) && !string.IsNullOrWhiteSpace(browserUsername))
+            {
+                username = browserUsername;
+            }
+
+            if (fields.TryGetValue("password", out var browserPassword) && !string.IsNullOrEmpty(browserPassword))
+            {
+                password = browserPassword;
+            }
+        }
+        catch
+        {
+            // Keep using the Blazor-bound values. This fallback prevents the login button from failing
+            // on older browsers while still fixing password-manager/browser autofill when available.
+        }
+    }
+
+    private void ToggleRecovery()
+    {
+        showRecovery = !showRecovery;
+        error = null;
+        recoveryMessage = null;
+        if (showRecovery)
+        {
+            recoveryUsername = string.IsNullOrWhiteSpace(username) ? recoveryUsername : username.Trim();
+        }
+    }
+
+    private async Task RequestRecoveryAsync()
+    {
+        if (busy || !interactiveReady)
+        {
+            return;
+        }
+
+        busy = true;
+        busyAction = "recovery";
+        error = null;
+        recoveryMessage = null;
+
+        try
+        {
+            var sent = await WithTimeout(Panel.RequestPasswordRecoveryAsync(recoveryUsername), TimeSpan.FromSeconds(15), "The recovery request timed out. Please try again.");
+            recoveryMessageClass = "alert success";
+            recoveryMessage = sent
+                ? "If that account exists and has an email address, a temporary password has been sent."
+                : "Recovery request saved. If no email arrives, ask an administrator to reset your password.";
+        }
+        catch (Exception ex)
+        {
+            recoveryMessageClass = "alert";
+            recoveryMessage = ex.Message;
+        }
+        finally
+        {
+            busy = false;
+            busyAction = "";
+        }
+    }
+
+    private static async Task<T> WithTimeout<T>(Task<T> task, TimeSpan timeout, string timeoutMessage)
+    {
+        var completed = await Task.WhenAny(task, Task.Delay(timeout));
+        if (completed != task)
+        {
+            throw new TimeoutException(timeoutMessage);
+        }
+
+        return await task;
+    }
+
+    private static async Task WithTimeout(Task task, TimeSpan timeout, string timeoutMessage)
+    {
+        var completed = await Task.WhenAny(task, Task.Delay(timeout));
+        if (completed != task)
+        {
+            throw new TimeoutException(timeoutMessage);
+        }
+
+        await task;
+    }
+}

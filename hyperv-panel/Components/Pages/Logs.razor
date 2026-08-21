@@ -1,0 +1,220 @@
+@page "/logs"
+@implements IDisposable
+@inject PanelService Panel
+@inject UserSession Session
+
+<PageTitle>Audit Logs</PageTitle>
+
+@if (!Session.IsLoggedIn)
+{
+    <NotSignedIn />
+}
+else if (!Session.User!.IsAdmin)
+{
+    <section class="panel empty-state">
+        <h1>Admin only</h1>
+        <p>Only admins can view audit logs.</p>
+    </section>
+}
+else
+{
+    <div class="page-head">
+        <div>
+            <h1>Audit Logs</h1>
+            <p>Local action history from the C# panel.</p>
+        </div>
+        <button class="button" @onclick="Load">Refresh</button>
+    </div>
+
+    @if (!string.IsNullOrWhiteSpace(message))
+    {
+        <div class="alert success">@message</div>
+    }
+
+    @if (!string.IsNullOrWhiteSpace(error))
+    {
+        <div class="alert danger">@error</div>
+    }
+
+    <section class="panel">
+        <div class="panel-head">
+            <div>
+                <h2>Audit cleanup</h2>
+                <p>Delete old audit logs so the database does not grow forever.</p>
+            </div>
+        </div>
+        <div class="inline-form">
+            <label class="inline-label">
+                Delete logs older than days
+                <input type="number" min="1" max="3650" step="1" @bind="cleanupOlderThanDays" />
+            </label>
+            <button class="button" @onclick="DeleteOldLogs">Delete old logs</button>
+            <button class="button danger" @onclick="ClearAllLogs">Clear all audit logs</button>
+        </div>
+        <div class="hint-card" style="margin-top: 1rem;">
+            Cleanup keeps the panel faster and smaller. Clear all audit logs will remove the visible list, then create one new audit entry saying the logs were cleared.
+        </div>
+    </section>
+
+    <section class="panel">
+        <div class="panel-head">
+            <h2>Events</h2>
+        </div>
+        <table class="data-table">
+            <thead>
+                <tr>
+                    <th>Time</th>
+                    <th>Action</th>
+                    <th>Resource</th>
+                    <th>Details</th>
+                    <th>Controls</th>
+                </tr>
+            </thead>
+            <tbody>
+                @foreach (var log in logs)
+                {
+                    <tr>
+                        <td>@log.CreatedAt.ToLocalTime()</td>
+                        <td>@log.Action</td>
+                        <td>@log.ResourceType @log.ResourceId</td>
+                        <td>@log.Details</td>
+                        <td>
+                            <div class="table-actions">
+                                @if (IsVmResource(log))
+                                {
+                                    <a class="button tiny" href="@BuildServerLink(log.ResourceId)">Open</a>
+                                    <button class="button tiny" @onclick='() => AuditVmAction(log.ResourceId!, "disconnect")'>Disconnect</button>
+                                    <button class="button tiny danger" @onclick='() => AuditVmAction(log.ResourceId!, "suspend")'>Suspend</button>
+                                    <button class="button tiny" @onclick='() => AuditVmAction(log.ResourceId!, "resume")'>Resume</button>
+                                }
+                                <button class="button tiny danger" @onclick="() => DeleteLog(log.Id)">Delete</button>
+                            </div>
+                        </td>
+                    </tr>
+                }
+            </tbody>
+        </table>
+    </section>
+}
+
+@code {
+    private IReadOnlyList<AuditLogEntry> logs = [];
+    private int cleanupOlderThanDays = 30;
+    private string? message;
+    private string? error;
+
+    protected override async Task OnInitializedAsync()
+    {
+        Session.Changed += OnSessionChanged;
+
+        if (Session.IsLoggedIn && Session.User!.IsAdmin)
+        {
+            await Load();
+        }
+    }
+
+    private async Task Load()
+    {
+        error = null;
+        try
+        {
+            logs = await Panel.GetAuditLogsAsync(Session.User);
+        }
+        catch (Exception ex)
+        {
+            error = $"Could not load audit logs: {ex.Message}";
+        }
+    }
+
+
+    private static bool IsVmResource(AuditLogEntry log) =>
+        string.Equals(log.ResourceType, "vm", StringComparison.OrdinalIgnoreCase)
+        && !string.IsNullOrWhiteSpace(log.ResourceId);
+
+    private static string BuildServerLink(string? vmName) =>
+        $"server?vm={Uri.EscapeDataString(vmName ?? string.Empty)}";
+
+    private async Task AuditVmAction(string vmName, string action)
+    {
+        error = null;
+        try
+        {
+            await Panel.VmActionAsync(Session.User, action, vmName);
+            message = action switch
+            {
+                "disconnect" => $"Network disconnected for {vmName}.",
+                "suspend" => $"VM {vmName} suspended.",
+                "resume" => $"VM {vmName} resumed.",
+                _ => $"Action {action} completed for {vmName}."
+            };
+            logs = await Panel.GetAuditLogsAsync(Session.User);
+        }
+        catch (Exception ex)
+        {
+            error = ex.Message;
+        }
+    }
+
+    private async Task DeleteLog(long logId)
+    {
+        error = null;
+        try
+        {
+            await Panel.DeleteAuditLogAsync(Session.User, logId);
+            logs = await Panel.GetAuditLogsAsync(Session.User);
+            message = $"Deleted audit log #{logId}.";
+        }
+        catch (Exception ex)
+        {
+            error = ex.Message;
+        }
+    }
+
+    private async Task DeleteOldLogs()
+    {
+        error = null;
+        try
+        {
+            var deleted = await Panel.DeleteOldAuditLogsAsync(Session.User, cleanupOlderThanDays);
+            logs = await Panel.GetAuditLogsAsync(Session.User);
+            message = $"Deleted {deleted} old audit log(s).";
+        }
+        catch (Exception ex)
+        {
+            error = ex.Message;
+        }
+    }
+
+    private async Task ClearAllLogs()
+    {
+        error = null;
+        try
+        {
+            var deleted = await Panel.ClearAuditLogsAsync(Session.User);
+            logs = await Panel.GetAuditLogsAsync(Session.User);
+            message = $"Cleared {deleted} audit log(s). A new cleanup audit entry was created.";
+        }
+        catch (Exception ex)
+        {
+            error = ex.Message;
+        }
+    }
+
+    private void OnSessionChanged()
+    {
+        _ = InvokeAsync(async () =>
+        {
+            if (Session.IsLoggedIn && Session.User!.IsAdmin)
+            {
+                await Load();
+            }
+
+            StateHasChanged();
+        });
+    }
+
+    public void Dispose()
+    {
+        Session.Changed -= OnSessionChanged;
+    }
+}

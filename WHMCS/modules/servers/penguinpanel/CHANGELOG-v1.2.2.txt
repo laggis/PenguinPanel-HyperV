@@ -1,0 +1,15 @@
+PenguinPanel WHMCS Server Module v1.2.2
+
+Email / endpoint synchronization fix:
+- Adds product setting: RDP Customer Hostname (default remotedesktop.penguinhosting.host).
+- Customer-facing RDP endpoint uses the RDP hostname + allocated RDP port.
+- Public IPv4 remains the real PenguinPanel publicAddress and is used for FiveM email endpoints.
+- Automatically creates hidden/admin-only WHMCS Product Custom Fields required by email merge fields:
+  PenguinPanel VM Name, RDP Host, RDP Port, Windows Username, Internal IPv4,
+  Public IPv4, FiveM Port, FiveM Internal Port.
+- Populates those fields during CreateAccount and refreshes them when client/admin status is viewed.
+- Existing Service Properties remain intact; the new custom fields are an email-compatible mirror.
+- Updated Swedish welcome email uses HOSTNAME:PORT for RDP and IP:PORT for FiveM.
+- Removed emoji placeholders that could render as ???? in some WHMCS/email encodings.
+
+No PenguinPanel API change is required for this WHMCS-side fix.
