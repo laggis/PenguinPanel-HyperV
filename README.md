@@ -1,16 +1,4 @@
 # PenguinPanel + WHMCS Integration
-
-> GitHub-safe source snapshot for the PenguinHosting Hyper-V VPS platform.
-
-**Snapshot date:** 2026-08-21  
-**PenguinPanel code line:** Step 2.9.1 + Step 2.8.1 + Step 2.7 cumulative  
-**WHMCS server module:** v1.2.3  
-**WHMCS addon module:** v1.1.0
-
-This repository contains the current PenguinPanel / Hyper-V / WHMCS integration and the configuration/documentation needed to rebuild it.
-
-Production secrets, customer database data, VM disks and Windows template disks are intentionally **not** included.
-
 ---
 
 ## What the project does
