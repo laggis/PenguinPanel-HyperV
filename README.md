@@ -14,7 +14,6 @@ If PenguinPanel is already installed and you only need a setting, jump to **Conf
 
 > [!IMPORTANT]
 > This GitHub backup intentionally does **not** contain production passwords, API keys, customer data, VHDX templates, or VM disks.  
-> You need the separate private backup described in `PRIVATE-BACKUP-CHECKLIST.md` for a full disaster recovery.
 
 ---
 
