@@ -15,12 +15,13 @@ else
     <div class="page-head">
         <div>
             <h1>Virtual Servers</h1>
-            <p>@(Session.User!.IsAdmin ? "Penguin-powered controls for your virtual servers." : "Only virtual servers assigned to your account are shown here.")</p>
+            <p>@(Session.User!.IsAdmin ? "Power controls, resource usage and account assignments." : "Only virtual servers assigned to your account are shown here.")</p>
         </div>
         <div class="button-row">
             @if (Session.User!.IsAdmin)
             {
-                <a class="button primary" href="users">User Manager</a>
+                <a class="button primary" href="create-vps">Create VPS</a>
+                <a class="button" href="users">User Manager</a>
             }
             <button class="button" @onclick="Load">Refresh</button>
         </div>
@@ -29,39 +30,6 @@ else
     @if (!string.IsNullOrWhiteSpace(message))
     {
         <div class="@messageClass">@message</div>
-    }
-
-    @if (Session.User!.IsAdmin)
-    {
-        <section class="panel form-grid">
-            <div class="panel-head full-row">
-                <h2>Quick VM assignment</h2>
-                <span class="muted">Assign a virtual server to a panel user</span>
-            </div>
-            <label>
-                User
-                <select @bind="assignUserId">
-                    <option value="0">Select user</option>
-                    @foreach (var user in users)
-                    {
-                        <option value="@user.Id">@user.Username (@user.Role)</option>
-                    }
-                </select>
-            </label>
-            <label>
-                VM
-                <select @bind="assignVm">
-                    <option value="">Select VM</option>
-                    @foreach (var vmItem in vms)
-                    {
-                        <option value="@vmItem.Name">@vmItem.Name</option>
-                    }
-                </select>
-            </label>
-            <div class="form-actions full-row">
-                <button type="button" class="button primary" @onclick="AssignVm" disabled="@(assignUserId == 0 || string.IsNullOrWhiteSpace(assignVm))">Assign selected VM</button>
-            </div>
-        </section>
     }
 
     <section class="panel">
@@ -84,6 +52,7 @@ else
         }
         else
         {
+            <div class="vm-table-scroll" role="region" aria-label="Virtual servers" tabindex="0">
             <table class="data-table">
                 <thead>
                     <tr>
@@ -121,8 +90,40 @@ else
                     }
                 </tbody>
             </table>
+            </div>
         }
     </section>
+
+    @if (Session.User!.IsAdmin)
+    {
+        <details class="panel assignment"><summary>Assign a server to a user</summary>
+            <div class="form-grid">
+            <label>
+                User
+                <select @bind="assignUserId">
+                    <option value="0">Select user</option>
+                    @foreach (var user in users)
+                    {
+                        <option value="@user.Id">@user.Username (@user.Role)</option>
+                    }
+                </select>
+            </label>
+            <label>
+                VM
+                <select @bind="assignVm">
+                    <option value="">Select VM</option>
+                    @foreach (var vmItem in vms)
+                    {
+                        <option value="@vmItem.Name">@vmItem.Name</option>
+                    }
+                </select>
+            </label>
+            <div class="form-actions full-row">
+                <button type="button" class="button primary" @onclick="AssignVm" disabled="@(assignUserId == 0 || string.IsNullOrWhiteSpace(assignVm))">Assign selected VM</button>
+            </div>
+            </div>
+        </details>
+    }
 }
 
 @code {

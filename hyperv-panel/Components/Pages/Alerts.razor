@@ -1,0 +1,318 @@
+@page "/alerts"
+@implements IDisposable
+@inject PanelService Panel
+@inject UserSession Session
+
+<PageTitle>Alerts &amp; Notifications</PageTitle>
+
+@if (!Session.IsLoggedIn)
+{
+    <NotSignedIn />
+}
+else if (Session.User?.IsAdmin != true)
+{
+    <section class="panel empty-state"><h1>Admin access required</h1><p>Monitoring alerts are available to panel administrators.</p></section>
+}
+else
+{
+    <div class="page-head">
+        <div>
+            <span class="eyebrow">Step 3.4.1</span>
+            <h1>Alerts &amp; Notifications</h1>
+            <p>Sustained host and VPS warnings with acknowledgement, cooldown reminders, and recovery emails.</p>
+        </div>
+        <div class="button-row">
+            <button class="button" @onclick="LoadAlerts" disabled="@busy">Refresh</button>
+            <button class="button primary" @onclick="EvaluateNow" disabled="@busy">Evaluate now</button>
+        </div>
+    </div>
+
+    @if (!string.IsNullOrWhiteSpace(message)) { <div class="@messageClass">@message</div> }
+    @if (!string.IsNullOrWhiteSpace(error)) { <div class="alert">@error</div> }
+
+    <div class="metric-grid alert-metric-grid">
+        <div class="metric"><span>Active</span><strong>@alerts.Count(item => item.Status == "active")</strong></div>
+        <div class="metric"><span>Acknowledged</span><strong>@alerts.Count(item => item.Status == "acknowledged")</strong></div>
+        <div class="metric"><span>Recovered</span><strong>@alerts.Count(item => item.Status == "resolved")</strong></div>
+        <div class="metric"><span>Pending confirmation</span><strong>@runtime.PendingConditionCount</strong></div>
+    </div>
+
+    <section class="panel">
+        <div class="panel-head">
+            <div><h2>Alert monitor</h2><p class="muted">A condition must repeat before a new alert is opened.</p></div>
+            <span class="pill @(runtime.IsRunning ? "online" : "warning")">@(runtime.IsRunning ? "Running" : "Stopped")</span>
+        </div>
+        <div class="server-info-grid">
+            <div><span>Last evaluation</span><strong>@FormatDate(runtime.LastEvaluationAt)</strong></div>
+            <div><span>Open alerts</span><strong>@runtime.OpenAlertCount</strong></div>
+            <div><span>Samples required</span><strong>@config.RequiredConsecutiveSamples</strong></div>
+            <div><span>Email recipients</span><strong>Admin account emails</strong></div>
+        </div>
+        <div class="hint-card">@runtime.LastMessage</div>
+    </section>
+
+    <section class="panel form-grid monitoring-alert-settings">
+        <div class="panel-head full-row"><div><h2>Rules and delivery</h2><p class="muted">Safe defaults avoid alerts from a single short spike.</p></div></div>
+        <label class="switch-row"><input type="checkbox" @bind="config.Enabled" /> Alert detection enabled</label>
+        <label class="switch-row"><input type="checkbox" @bind="config.EmailEnabled" /> Send alert emails through SMTP</label>
+        <label class="switch-row"><input type="checkbox" @bind="config.RecoveryEmails" /> Send recovery emails</label>
+        <label class="switch-row"><input type="checkbox" @bind="config.HeartbeatAlerts" /> Alert when a running VPS loses heartbeat</label>
+        <label class="switch-row"><input type="checkbox" @bind="config.AdapterAlerts" /> Alert when a VPS adapter disconnects</label>
+        <label>Consecutive bad samples<input type="number" min="1" max="20" @bind="config.RequiredConsecutiveSamples" /></label>
+        <label>Reminder cooldown minutes<input type="number" min="5" max="1440" @bind="config.ReminderMinutes" /></label>
+        <label>Host CPU warning %<input type="number" min="1" max="100" step="1" @bind="config.HostCpuPercent" /></label>
+        <label>Host memory critical %<input type="number" min="1" max="100" step="1" @bind="config.HostMemoryPercent" /></label>
+        <label>Host disk-free critical %<input type="number" min="1" max="99" step="1" @bind="config.HostDiskFreePercent" /></label>
+        <label>VPS CPU warning %<input type="number" min="1" max="100" step="1" @bind="config.VmCpuPercent" /></label>
+        <label>VPS memory-demand warning %<input type="number" min="1" max="500" step="1" @bind="config.VmMemoryPressurePercent" /></label>
+        <div class="hint-card full-row">At the default five-second monitoring interval and three required samples, a condition must remain bad for roughly 15 seconds. Acknowledging an alert silences reminders until it recovers.</div>
+        <button class="button primary" @onclick="SaveConfig" disabled="@busy">Save alert settings</button>
+    </section>
+
+    <section class="panel form-grid monitoring-alert-settings">
+        <div class="panel-head full-row">
+            <div><h2>Client VPS availability notifications</h2><p class="muted">Unexpected shutdown, guest freeze, extended downtime, and recovery messages.</p></div>
+            <span class="pill @(availabilityRuntime.IsRunning ? "online" : "warning")">@(availabilityRuntime.IsRunning ? "Running" : "Stopped")</span>
+        </div>
+        <label class="switch-row"><input type="checkbox" @bind="availabilityConfig.Enabled" /> Availability detection enabled</label>
+        <label class="switch-row"><input type="checkbox" @bind="availabilityConfig.ClientEmailEnabled" /> Allow client email notifications</label>
+        <label class="switch-row"><input type="checkbox" @bind="availabilityConfig.NotifyAdmins" /> Also email panel administrators</label>
+        <label class="switch-row"><input type="checkbox" @bind="availabilityConfig.RecoveryNotifications" /> Send recovery notifications</label>
+        <label>Unexpected shutdown delay minutes<input type="number" min="1" max="1440" @bind="availabilityConfig.UnexpectedDownMinutes" /></label>
+        <label>Unhealthy heartbeat delay minutes<input type="number" min="1" max="1440" @bind="availabilityConfig.GuestUnresponsiveMinutes" /></label>
+        <label>Extended downtime reminder minutes<input type="number" min="15" max="43200" @bind="availabilityConfig.ExtendedDowntimeMinutes" /></label>
+        <div class="hint-card full-row">
+            @availabilityRuntime.LastMessage Planned Stop, Restart, Suspend, Reinstall, Backup, and Restore operations are suppressed automatically. Clients choose which message types they want from their VPS Monitoring tab.
+        </div>
+        <button class="button primary" @onclick="SaveAvailabilityConfig" disabled="@busy">Save availability settings</button>
+    </section>
+
+    <section class="panel form-grid monitoring-alert-settings self-healing-settings">
+        <div class="panel-head full-row">
+            <div><h2>Safe automatic self-healing</h2><p class="muted">Capped Start/Restart recovery after monitoring confirms a real incident.</p></div>
+            <span class="pill @(selfHealingConfig.Enabled && selfHealingRuntime.IsRunning ? "online" : "warning")">@(selfHealingConfig.Enabled ? (selfHealingRuntime.IsRunning ? "Armed" : "Unavailable") : "Safely disabled")</span>
+        </div>
+        <label class="switch-row"><input type="checkbox" @bind="selfHealingConfig.Enabled" /> Master self-healing switch</label>
+        <label class="switch-row"><input type="checkbox" @bind="selfHealingConfig.ClientEmailEnabled" /> Email assigned clients about recovery actions</label>
+        <label class="switch-row"><input type="checkbox" @bind="selfHealingConfig.NotifyAdmins" /> Also email panel administrators</label>
+        <label class="switch-row"><input type="checkbox" @bind="selfHealingConfig.UnexpectedStopRecovery" /> Allow automatic Start after unexpected shutdown</label>
+        <label class="switch-row"><input type="checkbox" @bind="selfHealingConfig.HeartbeatRecovery" /> Allow automatic Restart after unhealthy heartbeat</label>
+        <label>Unexpected-stop delay minutes<input type="number" min="1" max="1440" @bind="selfHealingConfig.UnexpectedStopDelayMinutes" /></label>
+        <label>Unhealthy-heartbeat delay minutes<input type="number" min="5" max="1440" @bind="selfHealingConfig.HeartbeatDelayMinutes" /></label>
+        <label>Recovery confirmation minutes<input type="number" min="1" max="30" @bind="selfHealingConfig.ConfirmationMinutes" /></label>
+        <label>Retry cooldown minutes<input type="number" min="5" max="1440" @bind="selfHealingConfig.CooldownMinutes" /></label>
+        <label>Maximum attempts<input type="number" min="1" max="5" @bind="selfHealingConfig.MaxAttempts" /></label>
+        <label>Attempt window minutes<input type="number" min="60" max="10080" @bind="selfHealingConfig.AttemptWindowMinutes" /></label>
+        <div class="hint-card full-row">
+            @selfHealingRuntime.LastMessage Every VPS must also be opted in from its Monitoring tab. Planned maintenance, intentional Stop/Suspend, stale samples, and abuse security holds block all automatic actions. Heartbeat restart is disabled by default. Saving an enabled master switch may act immediately on an already-confirmed opted-in incident.
+        </div>
+        <button class="button primary" @onclick="SaveSelfHealingConfig" disabled="@busy">Save self-healing settings</button>
+    </section>
+
+    <section class="panel form-grid monitoring-alert-settings">
+        <div class="panel-head full-row">
+            <div><span class="eyebrow">Step 3.4.3</span><h2>Performance history</h2><p class="muted">Bounded one-minute host and VPS summaries for the monitoring graphs.</p></div>
+            <span class="pill @(performanceHistoryConfig.Enabled && performanceHistoryRuntime.IsRunning ? "online" : "warning")">@(performanceHistoryConfig.Enabled ? "Collecting" : "Disabled")</span>
+        </div>
+        <label class="switch-row"><input type="checkbox" @bind="performanceHistoryConfig.Enabled" /> Store performance history</label>
+        <label>Retention days<input type="number" min="1" max="365" @bind="performanceHistoryConfig.RetentionDays" /></label>
+        <div class="server-info-grid full-row">
+            <div><span>Collection interval</span><strong>@performanceHistoryRuntime.CollectionSeconds seconds</strong></div>
+            <div><span>Last stored</span><strong>@FormatDate(performanceHistoryRuntime.LastStoredAt)</strong></div>
+            <div><span>Host samples</span><strong>@performanceHistoryRuntime.HostSampleCount</strong></div>
+            <div><span>VPS samples</span><strong>@performanceHistoryRuntime.VmSampleCount</strong></div>
+        </div>
+        <div class="hint-card full-row">@performanceHistoryRuntime.LastMessage Old rows are deleted automatically every six hours. Longer graph ranges are downsampled to keep pages quick.</div>
+        <div class="button-row full-row">
+            <button class="button primary" @onclick="SavePerformanceHistoryConfig" disabled="@busy">Save history settings</button>
+            <button class="button danger" @onclick="ClearPerformanceHistory" disabled="@busy">@(confirmClearPerformanceHistory ? "Click again to confirm" : "Clear all performance history")</button>
+        </div>
+    </section>
+
+    <section class="panel">
+        <div class="panel-head"><div><h2>Open alerts</h2><p class="muted">Active and acknowledged conditions remain here until monitoring confirms recovery.</p></div><span class="pill">@OpenAlerts.Count open</span></div>
+        @if (OpenAlerts.Count == 0)
+        {
+            <div class="friendly-empty-state"><div class="empty-illustration">✓</div><div><h3>All penguins are calm</h3><p>No sustained monitoring condition currently needs attention.</p></div></div>
+        }
+        else
+        {
+            <div class="monitoring-alert-list">
+            @foreach (var item in OpenAlerts)
+            {
+                <article class="monitoring-alert-card @item.Severity">
+                    <div class="monitoring-alert-head">
+                        <div><span class="pill @SeverityClass(item.Severity)">@item.Severity</span><h3>@item.Title</h3></div>
+                        <span class="pill @(item.IsAcknowledged ? "warning" : "offline")">@StatusText(item.Status)</span>
+                    </div>
+                    <p>@item.Message</p>
+                    <div class="monitoring-alert-meta"><span>@item.ScopeName</span><span>First @item.FirstTriggeredAt.ToLocalTime().ToString("yyyy-MM-dd HH:mm:ss")</span><span>@item.OccurrenceCount samples</span></div>
+                    <div class="button-row">
+                        @if (!item.IsAcknowledged) { <button class="button" @onclick="() => Acknowledge(item.Id)" disabled="@busy">Acknowledge &amp; silence</button> }
+                        @if (item.ScopeType == "vm") { <a class="button" href="@ServerHref(item.ScopeName)">Open VPS</a> }
+                    </div>
+                </article>
+            }
+            </div>
+        }
+    </section>
+
+    <section class="panel">
+        <div class="panel-head">
+            <div><h2>Recovered history</h2><p class="muted">Automatically resolved alerts provide a short operational trail.</p></div>
+            @if (ResolvedAlerts.Count > 0)
+            {
+                <button class="button danger" @onclick="ClearResolved" disabled="@busy">@(confirmClear ? "Click again to confirm" : "Clear recovered history")</button>
+            }
+        </div>
+        @if (ResolvedAlerts.Count == 0)
+        {
+            <div class="notice-card compact-notice">No recovered alerts yet.</div>
+        }
+        else
+        {
+            <div class="monitoring-table-wrap"><table class="data-table"><thead><tr><th>Recovered</th><th>Alert</th><th>Scope</th><th>Severity</th><th>Acknowledged by</th></tr></thead><tbody>
+            @foreach (var item in ResolvedAlerts)
+            {
+                <tr><td>@FormatDate(item.ResolvedAt)</td><td>@item.Title</td><td>@item.ScopeName</td><td><span class="pill @SeverityClass(item.Severity)">@item.Severity</span></td><td>@(string.IsNullOrWhiteSpace(item.AcknowledgedBy) ? "—" : item.AcknowledgedBy)</td></tr>
+            }
+            </tbody></table></div>
+        }
+    </section>
+}
+
+@code {
+    private MonitoringAlertConfig config = MonitoringAlertConfig.Default;
+    private VmAvailabilityConfig availabilityConfig = VmAvailabilityConfig.Default;
+    private VmSelfHealingConfig selfHealingConfig = VmSelfHealingConfig.Default;
+    private PerformanceHistoryConfig performanceHistoryConfig = PerformanceHistoryConfig.Default;
+    private IReadOnlyList<MonitoringAlert> alerts = [];
+    private MonitoringAlertRuntimeStatus runtime = new(false, null, null, "Loading alert monitor...", 0, 0);
+    private VmAvailabilityRuntimeStatus availabilityRuntime = new(false, null, null, "Loading availability monitor...", 0);
+    private VmSelfHealingRuntimeStatus selfHealingRuntime = new(false, null, null, "Loading self-healing monitor...", 0, 0);
+    private PerformanceHistoryRuntimeStatus performanceHistoryRuntime = new(false, null, null, "Loading performance history...", 60, 0, 0);
+    private CancellationTokenSource? refreshCts;
+    private bool busy;
+    private bool confirmClear;
+    private bool confirmClearPerformanceHistory;
+    private string message = string.Empty;
+    private string messageClass = "alert success";
+    private string error = string.Empty;
+
+    private IReadOnlyList<MonitoringAlert> OpenAlerts => alerts.Where(item => item.IsOpen).ToList();
+    private IReadOnlyList<MonitoringAlert> ResolvedAlerts => alerts.Where(item => item.Status == "resolved").ToList();
+
+    protected override async Task OnInitializedAsync()
+    {
+        if (Session.User?.IsAdmin != true) return;
+        try
+        {
+            config = await Panel.GetMonitoringAlertConfigAsync(Session.User);
+            availabilityConfig = await Panel.GetVmAvailabilityConfigAsync(Session.User);
+            selfHealingConfig = await Panel.GetVmSelfHealingConfigAsync(Session.User);
+            performanceHistoryConfig = await Panel.GetPerformanceHistoryConfigAsync(Session.User);
+        }
+        catch (Exception ex) { error = ex.Message; }
+        await LoadAlerts();
+        refreshCts = new CancellationTokenSource();
+        _ = RefreshLoopAsync(refreshCts.Token);
+    }
+
+    private async Task LoadAlerts()
+    {
+        try
+        {
+            alerts = await Panel.GetMonitoringAlertsAsync(Session.User);
+            runtime = Panel.GetMonitoringAlertRuntimeStatus(Session.User);
+            availabilityRuntime = Panel.GetVmAvailabilityRuntimeStatus(Session.User);
+            selfHealingRuntime = Panel.GetVmSelfHealingRuntimeStatus(Session.User);
+            performanceHistoryRuntime = Panel.GetPerformanceHistoryRuntimeStatus(Session.User);
+        }
+        catch (Exception ex) { error = ex.Message; }
+    }
+
+    private async Task SaveConfig()
+    {
+        await RunAction(async () => { await Panel.SaveMonitoringAlertConfigAsync(Session.User, config); message = "Alert settings saved."; });
+    }
+
+    private async Task EvaluateNow()
+    {
+        await RunAction(async () =>
+        {
+            await Panel.EvaluateMonitoringAlertsNowAsync(Session.User);
+            await Panel.EvaluateVmAvailabilityNowAsync(Session.User);
+            await Panel.EvaluateVmSelfHealingNowAsync(Session.User);
+            message = "Monitoring alerts, client availability, and safe self-healing were evaluated.";
+        });
+    }
+
+    private async Task SaveAvailabilityConfig()
+    {
+        await RunAction(async () => { await Panel.SaveVmAvailabilityConfigAsync(Session.User, availabilityConfig); message = "Client availability settings saved."; });
+    }
+
+    private async Task SaveSelfHealingConfig()
+    {
+        await RunAction(async () => { await Panel.SaveVmSelfHealingConfigAsync(Session.User, selfHealingConfig); message = "Safe self-healing settings saved."; });
+    }
+
+    private async Task SavePerformanceHistoryConfig()
+    {
+        await RunAction(async () => { await Panel.SavePerformanceHistoryConfigAsync(Session.User, performanceHistoryConfig); message = "Performance history settings saved."; });
+    }
+
+    private async Task ClearPerformanceHistory()
+    {
+        if (!confirmClearPerformanceHistory) { confirmClearPerformanceHistory = true; return; }
+        await RunAction(async () =>
+        {
+            var deleted = await Panel.ClearPerformanceHistoryAsync(Session.User);
+            message = $"Deleted {deleted.HostDeleted} host and {deleted.VmDeleted} VPS performance samples.";
+            confirmClearPerformanceHistory = false;
+        });
+    }
+
+    private async Task Acknowledge(long id)
+    {
+        await RunAction(async () => { await Panel.AcknowledgeMonitoringAlertAsync(Session.User, id); message = "Alert acknowledged. Reminder emails are silenced until recovery."; });
+    }
+
+    private async Task ClearResolved()
+    {
+        if (!confirmClear) { confirmClear = true; return; }
+        await RunAction(async () => { var count = await Panel.ClearResolvedMonitoringAlertsAsync(Session.User); message = $"Deleted {count} recovered alert(s)."; confirmClear = false; });
+    }
+
+    private async Task RunAction(Func<Task> action)
+    {
+        busy = true; error = string.Empty; message = string.Empty; messageClass = "alert success";
+        try { await action(); await LoadAlerts(); }
+        catch (Exception ex) { error = ex.Message; }
+        finally { busy = false; }
+    }
+
+    private async Task RefreshLoopAsync(CancellationToken token)
+    {
+        try
+        {
+            while (!token.IsCancellationRequested)
+            {
+                await Task.Delay(TimeSpan.FromSeconds(5), token);
+                await InvokeAsync(async () => { await LoadAlerts(); StateHasChanged(); });
+            }
+        }
+        catch (OperationCanceledException) when (token.IsCancellationRequested) { }
+    }
+
+    private static string ServerHref(string name) => $"server?vm={Uri.EscapeDataString(name)}";
+    private static string FormatDate(DateTime? value) => value is null ? "—" : value.Value.ToLocalTime().ToString("yyyy-MM-dd HH:mm:ss");
+    private static string StatusText(string value) => value == "acknowledged" ? "Acknowledged" : value == "resolved" ? "Recovered" : "Active";
+    private static string SeverityClass(string value) => value == "critical" ? "offline" : "warning";
+
+    public void Dispose()
+    {
+        refreshCts?.Cancel();
+        refreshCts?.Dispose();
+    }
+}

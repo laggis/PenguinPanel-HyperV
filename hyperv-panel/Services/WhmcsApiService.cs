@@ -1,3 +1,4 @@
+using System.Net.Mail;
 using System.Security.Cryptography;
 
 namespace HyperVPanel.Services;
@@ -17,12 +18,22 @@ public sealed class WhmcsApiService(AppDatabase db, PanelService panel)
             var existing = await db.GetWhmcsServiceAsync(request.ServiceId);
             if (existing is not null)
             {
+                // Never let the same WHMCS service id silently move between customers.
+                // This is defensive: WHMCS service ids are normally immutable, but a stale
+                // or manually-edited record must not be used to provision for another client.
+                if (existing.ClientId != request.ClientId)
+                {
+                    throw new InvalidOperationException(
+                        $"WHMCS service {request.ServiceId} is already recorded for client {existing.ClientId}, not client {request.ClientId}. Manual review is required.");
+                }
+
+                await SyncWhmcsCustomerEmailAsync(existing.PanelUserId, request.CustomerEmail);
+
                 // A failed core Hyper-V provisioning attempt is safe to retry only when the
                 // recorded VM does not exist. ProvisionVmFromTemplateAsync already performs
                 // conservative cleanup of a partially-created VM/folder before returning an
                 // error. If a VM does exist, preserve idempotency and force an admin review.
-                if (string.Equals(existing.Status, "error", StringComparison.OrdinalIgnoreCase)
-                    && existing.ClientId == request.ClientId)
+                if (string.Equals(existing.Status, "error", StringComparison.OrdinalIgnoreCase))
                 {
                     var failedVm = await panel.GetVmAsync(ApiAdmin, existing.VmName);
                     if (failedVm is null)
@@ -39,8 +50,31 @@ public sealed class WhmcsApiService(AppDatabase db, PanelService panel)
                         return await BuildExistingCreateResponseAsync(existing);
                     }
                 }
+                else if (string.Equals(existing.Status, "terminated", StringComparison.OrdinalIgnoreCase))
+                {
+                    // WHMCS admins can legitimately press Create again on a terminated
+                    // service. Termination intentionally keeps the historical mapping row,
+                    // which previously caused the generic duplicate guard to block this.
+                    // Recreate is safe only when the old VM is truly gone.
+                    var terminatedVm = await panel.GetVmAsync(ApiAdmin, existing.VmName);
+                    if (terminatedVm is null)
+                    {
+                        await db.DeleteTerminatedWhmcsServiceForRecreateAsync(request.ServiceId);
+                        await db.AddAuditAsync(
+                            "WHMCS_TERMINATED_SERVICE_RECREATE_RESET",
+                            "whmcs-service",
+                            request.ServiceId.ToString(),
+                            $"Cleared terminated mapping for former VM {existing.VmName}. WHMCS requested a fresh Create for the same service id/client.");
+                    }
+                    else
+                    {
+                        return await BuildExistingCreateResponseAsync(existing);
+                    }
+                }
                 else
                 {
+                    // Active, provisioning, suspended, and unknown non-terminal states retain
+                    // strict idempotency. A second Create must never clone a duplicate VPS.
                     return await BuildExistingCreateResponseAsync(existing);
                 }
             }
@@ -389,14 +423,39 @@ public sealed class WhmcsApiService(AppDatabase db, PanelService panel)
         await db.UpdateWhmcsServiceStatusAsync(serviceId, "terminated", string.Empty);
 
         var cleanupMessage = string.Empty;
-        if (await db.IsWhmcsManagedUserAsync(service.PanelUserId))
+        var user = await db.GetUserByIdAsync(service.PanelUserId);
+        var isWhmcsManagedUser = await db.IsWhmcsManagedUserAsync(service.PanelUserId);
+
+        // Step 2.9.8 legacy adoption:
+        // Accounts created by older PenguinPanel/WHMCS builds may predate the
+        // whmcs_managed_users marker. Never guess based only on service linkage,
+        // email, username, or the fact that the account currently has no VMs.
+        // Only adopt a legacy account when the audit log proves USER_CREATED was
+        // performed by the WHMCS API.
+        if (!isWhmcsManagedUser
+            && user is not null
+            && !user.IsAdmin
+            && !user.IsSubUser
+            && await db.WasUserCreatedByWhmcsApiAsync(service.PanelUserId, user.Username))
+        {
+            await db.MarkWhmcsManagedUserAsync(service.PanelUserId, service.ClientId);
+            isWhmcsManagedUser = true;
+
+            await db.AddAuditAsync(
+                "WHMCS_LEGACY_PANEL_USER_ADOPTED",
+                "user",
+                user.Username,
+                $"Legacy account was proven to have been created by WHMCS API and was marked as WHMCS-managed during termination of service {serviceId}.");
+        }
+
+        if (isWhmcsManagedUser)
         {
             var remainingWhmcsServices = await db.CountNonTerminatedWhmcsServicesForUserAsync(service.PanelUserId);
             var remainingVmAssignments = await db.CountUserVmAssignmentsAsync(service.PanelUserId);
 
             if (remainingWhmcsServices == 0 && remainingVmAssignments == 0)
             {
-                var user = await db.GetUserByIdAsync(service.PanelUserId);
+                user ??= await db.GetUserByIdAsync(service.PanelUserId);
                 if (user is not null && !user.IsAdmin && !user.IsSubUser)
                 {
                     try
@@ -442,6 +501,7 @@ public sealed class WhmcsApiService(AppDatabase db, PanelService panel)
             {
                 throw new InvalidOperationException("WHMCS VPS services must be linked to a main customer account, not an admin or sub-user.");
             }
+            await SyncWhmcsCustomerEmailAsync(explicitUser.Id, request.CustomerEmail);
             return new CustomerResolution(explicitUser, false, string.Empty);
         }
 
@@ -451,6 +511,7 @@ public sealed class WhmcsApiService(AppDatabase db, PanelService panel)
             var linked = await db.GetUserByIdAsync(linkedUserId.Value);
             if (linked is not null && !linked.IsAdmin && !linked.IsSubUser)
             {
+                await SyncWhmcsCustomerEmailAsync(linked.Id, request.CustomerEmail);
                 return new CustomerResolution(linked, false, string.Empty);
             }
         }
@@ -461,6 +522,7 @@ public sealed class WhmcsApiService(AppDatabase db, PanelService panel)
             var byEmail = await db.GetUserByEmailAsync(email);
             if (byEmail is not null && !byEmail.IsAdmin && !byEmail.IsSubUser)
             {
+                await SyncWhmcsCustomerEmailAsync(byEmail.Id, request.CustomerEmail);
                 return new CustomerResolution(byEmail, false, string.Empty);
             }
         }
@@ -473,6 +535,7 @@ public sealed class WhmcsApiService(AppDatabase db, PanelService panel)
             {
                 throw new InvalidOperationException($"PenguinPanel username '{requestedUsername}' belongs to an admin or sub-user and cannot be linked to WHMCS client {request.ClientId}.");
             }
+            await SyncWhmcsCustomerEmailAsync(byUsername.Id, request.CustomerEmail);
             return new CustomerResolution(byUsername, false, string.Empty);
         }
 
@@ -486,6 +549,26 @@ public sealed class WhmcsApiService(AppDatabase db, PanelService panel)
             ?? throw new InvalidOperationException("PenguinPanel created the customer account but could not read it back from the database.");
 
         return new CustomerResolution(createdUser, true, temporaryPassword);
+    }
+
+    private async Task SyncWhmcsCustomerEmailAsync(long panelUserId, string? customerEmail)
+    {
+        var value = (customerEmail ?? string.Empty).Trim();
+        if (string.IsNullOrWhiteSpace(value) || !MailAddress.TryCreate(value, out var parsed))
+        {
+            return;
+        }
+
+        var user = await db.GetUserByIdAsync(panelUserId);
+        if (user is null || user.IsAdmin || user.IsSubUser)
+        {
+            return;
+        }
+
+        // WHMCS is authoritative for the primary customer's delivery address.
+        // Keeping the linked panel account synchronized makes monitoring mail
+        // work even when the panel user was originally created without email.
+        await db.UpdateUserEmailAsync(user.Id, parsed.Address);
     }
 
     private async Task<string> FindAvailableUsernameAsync(string baseUsername, long clientId)
@@ -539,7 +622,9 @@ public sealed class WhmcsApiService(AppDatabase db, PanelService panel)
             string.IsNullOrWhiteSpace(service.LastError) ? [] : [service.LastError],
             string.Equals(service.Status, "error", StringComparison.OrdinalIgnoreCase)
                 ? "This WHMCS service already exists in an error state. Review/clean up the existing VM before retrying provisioning."
-                : "This WHMCS service already exists. No duplicate VPS was created.");
+                : string.Equals(service.Status, "terminated", StringComparison.OrdinalIgnoreCase)
+                    ? "This WHMCS service is marked terminated, but its old Hyper-V VM still exists. PenguinPanel refused to recreate it to avoid a duplicate VPS. Remove/reconcile the stale VM first."
+                    : "This WHMCS service already exists. No duplicate VPS was created.");
     }
 
     private async Task<WhmcsVpsStatusResponse> BuildStatusAsync(WhmcsServiceRecord service)

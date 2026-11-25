@@ -25,7 +25,8 @@ public sealed class WhmcsCreateVpsRequest
     public string StorageRoot { get; set; } = string.Empty;
     public bool EnableFiveM { get; set; }
     public int? FiveMExternalPort { get; set; }
-    public int FiveMInternalPort { get; set; } = 30120;
+    // 0 mirrors the collision-safe public FiveM port allocated during provisioning.
+    public int FiveMInternalPort { get; set; }
 }
 
 public sealed record WhmcsServiceRecord(

@@ -7,15 +7,28 @@ builder.Services.AddRazorComponents()
     .AddInteractiveServerComponents();
 builder.Services.AddSingleton<AppDatabase>();
 builder.Services.AddSingleton<PowerShellService>();
+builder.Services.AddSingleton<HyperVConsoleService>();
 builder.Services.AddSingleton<EmailService>();
 builder.Services.AddHttpClient();
 builder.Services.AddSingleton<GuacamoleJsonAuthService>();
+builder.Services.AddSingleton<LiveMonitoringService>();
+builder.Services.AddSingleton<MonitoringAlertService>();
+builder.Services.AddSingleton<VmAvailabilityService>();
+builder.Services.AddSingleton<VmSelfHealingService>();
+builder.Services.AddSingleton<PerformanceHistoryService>();
 builder.Services.AddSingleton<PanelService>();
 builder.Services.AddSingleton<WhmcsApiAuthService>();
 builder.Services.AddSingleton<WhmcsApiService>();
 builder.Services.AddSingleton<AbuseMonitorService>();
+builder.Services.AddSingleton<ReinstallRollbackCleanupService>();
 builder.Services.AddScoped<UserSession>();
+builder.Services.AddHostedService(sp => sp.GetRequiredService<ReinstallRollbackCleanupService>());
 builder.Services.AddHostedService(sp => sp.GetRequiredService<AbuseMonitorService>());
+builder.Services.AddHostedService(sp => sp.GetRequiredService<LiveMonitoringService>());
+builder.Services.AddHostedService(sp => sp.GetRequiredService<MonitoringAlertService>());
+builder.Services.AddHostedService(sp => sp.GetRequiredService<VmAvailabilityService>());
+builder.Services.AddHostedService(sp => sp.GetRequiredService<VmSelfHealingService>());
+builder.Services.AddHostedService(sp => sp.GetRequiredService<PerformanceHistoryService>());
 
 var app = builder.Build();
 

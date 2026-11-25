@@ -209,7 +209,11 @@ else
                                     @foreach (var assignment in AssignmentsForUser(user.Id))
                                     {
                                         <span class="pill assignment-pill">
-                                            @assignment.VmName
+                                            <a class="assignment-vm-link"
+                                               href="@ServerHref(assignment.VmName)"
+                                               title="Open @assignment.VmName">
+                                                @assignment.VmName
+                                            </a>
                                             <button type="button" title="Remove assignment" @onclick="() => UnassignVm(assignment.Id)" disabled="@busy">x</button>
                                         </span>
                                     }
@@ -525,6 +529,9 @@ else
     }
 
     private IEnumerable<UserVmAssignment> AssignmentsForUser(long userId) => assignments.Where(item => item.UserId == userId);
+
+    private static string ServerHref(string vmName) =>
+        $"server?vm={Uri.EscapeDataString(vmName ?? string.Empty)}";
 
     private static string InitialFor(string username) => string.IsNullOrWhiteSpace(username) ? "?" : username.Trim()[0].ToString().ToUpperInvariant();
 

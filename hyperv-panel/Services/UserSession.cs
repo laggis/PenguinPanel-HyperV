@@ -12,6 +12,8 @@ public sealed class UserSession
     public bool IsRestoring { get; private set; }
     public bool HasCheckedBrowserSession { get; private set; }
 
+    private Task? browserRestoreTask;
+
     public event Action? Changed;
 
     public void SignIn(PanelUser user, string? sessionToken = null)
@@ -38,12 +40,21 @@ public sealed class UserSession
         NotifyChanged();
     }
 
-    public async Task RestoreFromBrowserAsync(PanelService panel, IJSRuntime js)
+    public Task RestoreFromBrowserAsync(PanelService panel, IJSRuntime js)
     {
-        if (HasCheckedBrowserSession || IsLoggedIn || IsRestoring)
+        if (HasCheckedBrowserSession || IsLoggedIn)
         {
-            return;
+            return Task.CompletedTask;
         }
+
+        // MainLayout and Login can both request restoration during the first
+        // interactive render. Make them await the same operation instead of
+        // letting the second caller return while IsRestoring is still true.
+        return browserRestoreTask ??= RestoreFromBrowserCoreAsync(panel, js);
+    }
+
+    private async Task RestoreFromBrowserCoreAsync(PanelService panel, IJSRuntime js)
+    {
 
         IsRestoring = true;
         NotifyChanged();

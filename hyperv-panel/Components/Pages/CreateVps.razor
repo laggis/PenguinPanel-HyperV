@@ -101,12 +101,12 @@ else
             </select>
         </label>
         <label>Internal IPv4 <span class="muted">(blank = auto)</span><input @bind="provisionInternalIp" placeholder="Auto from pool" disabled="@provisionBusy" /></label>
-        <label>Public RDP port <span class="muted">(blank = auto)</span><input type="number" min="1024" max="65535" @bind="provisionRdpPort" placeholder="Auto" disabled="@provisionBusy" /><span class="muted">With automatic Windows guest setup enabled, PenguinPanel changes the Windows RDP listener to this same port.</span></label>
+        <label>Public RDP port <span class="muted">(blank = auto)</span><input type="number" min="1024" max="65535" @bind="provisionRdpPort" placeholder="Auto" disabled="@provisionBusy" /><span class="muted">With automatic Windows guest setup enabled, PenguinPanel changes the Windows RDP listener to this same TCP + UDP port.</span></label>
         <label class="switch-row"><input type="checkbox" @bind="provisionEnableFiveM" disabled="@provisionBusy" /> Add FiveM TCP + UDP port mapping</label>
         @if (provisionEnableFiveM)
         {
             <label>FiveM public port <span class="muted">(blank = auto)</span><input type="number" min="1024" max="65535" @bind="provisionFiveMExternalPort" placeholder="Auto" disabled="@provisionBusy" /></label>
-            <label>FiveM VM port<input type="number" min="1" max="65535" @bind="provisionFiveMInternalPort" disabled="@provisionBusy" /></label>
+            <label>FiveM VM port <span class="muted">(0 = same as public)</span><input type="number" min="0" max="65535" @bind="provisionFiveMInternalPort" disabled="@provisionBusy" /></label>
             <div class="notice-card full-row compact-notice">
                 <strong>FiveM forwarding</strong>
                 <p>PenguinPanel will create both TCP and UDP WinNAT/host-firewall rules. When automatic Windows guest setup is enabled, it also opens the same FiveM port inside the VPS Windows Firewall.</p>
@@ -154,7 +154,7 @@ else
     private string provisionStorageRoot = string.Empty;
     private bool provisionEnableFiveM;
     private int? provisionFiveMExternalPort;
-    private int provisionFiveMInternalPort = 30120;
+    private int provisionFiveMInternalPort;
     private string provisionGuestUsername = "Administrator";
     private string provisionTemplatePassword = string.Empty;
     private string provisionNewPassword = string.Empty;
@@ -193,9 +193,9 @@ else
         {
             provisionStorageRoot = provisionDefaults.VmStorageRoot;
         }
-        if (provisionFiveMInternalPort is < 1 or > 65535)
+        if (provisionFiveMInternalPort is < 0 or > 65535)
         {
-            provisionFiveMInternalPort = provisionDefaults.DefaultFiveMInternalPort;
+            provisionFiveMInternalPort = 0;
         }
         if (provisionUserId == 0)
         {

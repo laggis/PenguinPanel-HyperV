@@ -7,21 +7,20 @@
 <PageTitle>Sign in - PenguinPanel</PageTitle>
 
 <section class="login-shell">
-    <div class="login-glow login-glow-one"></div>
-    <div class="login-glow login-glow-two"></div>
 
     <div class="login-stage login-stage-single">
         <form class="login-card login-card-clean" @onsubmit="LoginAsync" @onsubmit:preventDefault="true" autocomplete="on">
             <div class="login-card-head login-card-head-clean">
                 <div class="login-logo-row login-logo-row-centered">
-                    <div class="login-logo">PG</div>
                     <div>
-                        <strong>🐧 PenguinPanel</strong>
-                        <span>Virtual server panel</span>
+                        <strong>PenguinPanel</strong>
+                        <span>VPS Hosting</span>
                     </div>
+                    <button type="button" class="appearance-toggle" data-appearance-toggle="true" title="Switch appearance: System, Light, Dark">
+                        Theme · <span class="mode-system">System</span><span class="mode-light">Light</span><span class="mode-dark">Dark</span>
+                    </button>
                 </div>
-                <span class="eyebrow">Welcome back</span>
-                <h2>Sign in to your panel</h2>
+                <h2>Sign in</h2>
                 <p>Use the account details provided by your administrator.</p>
             </div>
 
@@ -47,16 +46,14 @@
             <label class="login-field" for="penguin-login-username">
                 <span>Username</span>
                 <div class="login-input-wrap">
-                    <span aria-hidden="true">👤</span>
-                    <input id="penguin-login-username" name="username" @bind="username" @bind:event="oninput" autocomplete="username" autofocus disabled="@(!FormReady)" />
+                    <input id="penguin-login-username" name="username" @bind="username" @bind:event="oninput" autocomplete="username" autofocus disabled="@busy" />
                 </div>
             </label>
 
             <label class="login-field" for="penguin-login-password">
                 <span>Password</span>
                 <div class="login-input-wrap">
-                    <span aria-hidden="true">🔒</span>
-                    <input id="penguin-login-password" name="password" type="password" @bind="password" @bind:event="oninput" autocomplete="current-password" disabled="@(!FormReady)" />
+                    <input id="penguin-login-password" name="password" type="password" @bind="password" @bind:event="oninput" autocomplete="current-password" disabled="@busy" />
                 </div>
             </label>
 
@@ -72,7 +69,6 @@
                     <label class="login-field" for="penguin-recovery-username">
                         <span>Recovery username</span>
                         <div class="login-input-wrap">
-                            <span aria-hidden="true">?</span>
                             <input id="penguin-recovery-username" name="recoveryUsername" @bind="recoveryUsername" @bind:event="oninput" autocomplete="username" disabled="@(busy || !interactiveReady)" />
                         </div>
                     </label>
@@ -83,7 +79,7 @@
             }
 
             <label class="remember-row">
-                <input type="checkbox" @bind="rememberMe" disabled="@(!FormReady)" />
+                <input type="checkbox" @bind="rememberMe" disabled="@busy" />
                 <span>Keep me signed in on this browser</span>
             </label>
 
@@ -109,7 +105,10 @@
     private string recoveryUsername = string.Empty;
     private bool interactiveReady;
 
-    private bool FormReady => interactiveReady && !Session.IsRestoring;
+    // Session restoration runs in the background and must never lock users out
+    // of the username/password fields. Login submission still waits until the
+    // interactive Blazor circuit is ready.
+    private bool FormReady => interactiveReady;
 
     private string LoginButtonText => !interactiveReady
         ? "Preparing sign in..."

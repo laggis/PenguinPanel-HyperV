@@ -4,24 +4,24 @@
 @inject IJSRuntime JS
 
 <div class="brand">
-    <div class="brand-mark">PG</div>
     <div>
-        <strong>🐧 PenguinPanel</strong>
-        <span>Virtual server panel</span>
+        <strong>PenguinPanel</strong>
+        <span>VPS Hosting</span>
     </div>
+    <button class="menu-toggle" type="button" aria-controls="panel-nav" aria-expanded="@(menuOpen ? "true" : "false")" @onclick="ToggleMenu">Menu</button>
 </div>
 
-<div class="nav-scrollable">
-    <nav class="nav">
+<div id="panel-nav" class="nav-scrollable @(menuOpen ? "is-open" : "")">
+    <nav class="nav" aria-label="Panel navigation" @onclick="CloseMenu">
         <div class="nav-item">
             <NavLink class="nav-link" href="" Match="NavLinkMatch.All">
-                <span>⌂</span> Dashboard
+                Dashboard
             </NavLink>
         </div>
 
         <div class="nav-item">
             <NavLink class="nav-link" href="vms">
-                <span>▣</span> Virtual Servers
+                Virtual Servers
             </NavLink>
         </div>
 
@@ -29,7 +29,7 @@
         {
             <div class="nav-item">
                 <NavLink class="nav-link" href="create-vps">
-                    <span>＋</span> Create VPS
+                    Create VPS
                 </NavLink>
             </div>
         }
@@ -38,43 +38,61 @@
         {
             <div class="nav-item">
                 <NavLink class="nav-link" href="account">
-                    <span>○</span> Account
+                    Account
                 </NavLink>
             </div>
         }
 
         @if (IsAdminUser())
         {
-            <div class="nav-section-title">Admin</div>
+            <div class="nav-section-title">Administration</div>
+
+            <div class="nav-item">
+                <NavLink class="nav-link" href="monitoring">
+                    Live Monitoring
+                </NavLink>
+            </div>
+
+            <div class="nav-item">
+                <NavLink class="nav-link" href="alerts">
+                    Alerts &amp; Notifications
+                </NavLink>
+            </div>
 
             <div class="nav-item">
                 <NavLink class="nav-link" href="users">
-                    <span>☷</span> User Manager
+                    User Manager
                 </NavLink>
             </div>
 
 
             <div class="nav-item">
                 <NavLink class="nav-link" href="templates">
-                    <span>▤</span> OS Templates
+                    OS Templates
                 </NavLink>
             </div>
 
             <div class="nav-item">
                 <NavLink class="nav-link" href="abuse">
-                    <span>⚑</span> Abuse Protection
+                    Abuse Protection
                 </NavLink>
             </div>
 
             <div class="nav-item">
                 <NavLink class="nav-link" href="logs">
-                    <span>≡</span> Audit Logs
+                    Audit Logs
+                </NavLink>
+            </div>
+
+            <div class="nav-item">
+                <NavLink class="nav-link" href="consistency">
+                    Consistency Scanner
                 </NavLink>
             </div>
 
             <div class="nav-item">
                 <NavLink class="nav-link" href="settings">
-                    <span>⚙</span> Settings
+                    Settings
                 </NavLink>
             </div>
         }
@@ -87,6 +105,10 @@
 </div>
 
 @code {
+    private bool menuOpen;
+    private void ToggleMenu() => menuOpen = !menuOpen;
+    private void CloseMenu() => menuOpen = false;
+
     private bool IsAdminUser()
     {
         return Session.User?.IsAdmin == true

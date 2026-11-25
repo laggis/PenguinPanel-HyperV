@@ -22,7 +22,7 @@ else
     <div class="page-head">
         <div>
             <h1>Settings</h1>
-            <p>Current modules, email delivery, Guacamole, and local defaults.</p>
+            <p>Current modules, email delivery, native Remote Desktop, and local defaults.</p>
         </div>
     </div>
 
@@ -65,9 +65,14 @@ else
             <div><span>Templates</span><strong>Global template manager is available from OS Templates</strong></div>
             <div><span>Backups</span><strong>Restore points are inside each virtual server's Backups tab</strong></div>
             <div><span>Email notifications</span><strong>@SmtpStatus()</strong></div>
-            <div><span>Web RDP</span><strong>@WebRdpStatus()</strong></div>
-            <div><span>Guacamole URL</span><strong>@WebRdpUrl()</strong></div>
-            <div><span>Guacamole path/template</span><strong>@WebRdpPath()</strong></div>
+            <div><span>Monitoring alerts</span><strong><a href="alerts">Open thresholds and notifications</a></strong></div>
+            <div><span>Console mode</span><strong>@ConsoleModeStatus()</strong></div>
+            @if (UseBrowserConsole())
+            {
+                <div><span>Legacy browser RDP</span><strong>@WebRdpStatus()</strong></div>
+                <div><span>Legacy gateway URL</span><strong>@WebRdpUrl()</strong></div>
+                <div><span>Legacy path/template</span><strong>@WebRdpPath()</strong></div>
+            }
             <div><span>First login</span><strong>Configured privately in appsettings.json</strong></div>
         </section>
     </div>
@@ -92,6 +97,40 @@ else
     private string SmtpFrom() => string.IsNullOrWhiteSpace(Configuration["Smtp:FromEmail"])
         ? "Not set"
         : Configuration["Smtp:FromEmail"]!;
+
+    private string ConsoleModeSetting()
+    {
+        var configured = (Configuration["Console:Mode"] ?? string.Empty).Trim();
+        return string.IsNullOrWhiteSpace(configured) ? "HyperVBasic" : configured;
+    }
+
+    private bool UseHyperVBasicConsole()
+    {
+        var mode = ConsoleModeSetting();
+        return mode.Equals("HyperVBasic", StringComparison.OrdinalIgnoreCase)
+            || mode.Equals("HyperV", StringComparison.OrdinalIgnoreCase)
+            || mode.Equals("VmConnect", StringComparison.OrdinalIgnoreCase);
+    }
+
+    private bool UseBrowserConsole()
+    {
+        var mode = ConsoleModeSetting();
+        return mode.Equals("Browser", StringComparison.OrdinalIgnoreCase)
+            || mode.Equals("WebRdp", StringComparison.OrdinalIgnoreCase)
+            || mode.Equals("Guacamole", StringComparison.OrdinalIgnoreCase);
+    }
+
+    private string ConsoleModeStatus()
+    {
+        if (UseHyperVBasicConsole())
+        {
+            return "Hyper-V Basic Console - boot-level display/input";
+        }
+
+        return UseBrowserConsole()
+            ? $"Legacy browser mode ({WebRdpProvider()})"
+            : "Native Windows Remote Desktop - direct .RDP launcher";
+    }
 
     private string WebRdpStatus()
     {

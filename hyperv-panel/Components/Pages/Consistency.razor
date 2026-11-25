@@ -1,0 +1,478 @@
+@page "/consistency"
+@inject PanelService Panel
+@inject UserSession Session
+
+<PageTitle>Consistency Scanner</PageTitle>
+
+@if (!Session.IsLoggedIn)
+{
+    <NotSignedIn />
+}
+else if (Session.User?.IsAdmin != true)
+{
+    <section class="empty-state">
+        <h2>Admin access required</h2>
+        <p>The node consistency scanner is available only to PenguinPanel administrators.</p>
+    </section>
+}
+else
+{
+    <div class="page-head">
+        <div>
+            <h1>Consistency Scanner</h1>
+            <p>Cross-check Hyper-V, PenguinPanel, WinNAT, Windows Firewall, storage, WHMCS, assignments, and recovery records.</p>
+        </div>
+        <div class="button-row">
+            <button class="button" @onclick="PreviewSafeCleanup" disabled="@busy">Preview Safe Cleanup</button>
+            <button class="button primary" @onclick="RunScan" disabled="@busy">@(busy ? "Working..." : "Run Full Scan")</button>
+        </div>
+    </div>
+
+    @if (!string.IsNullOrWhiteSpace(message))
+    {
+        <div class="@messageClass">@message</div>
+    }
+
+    <div class="notice-card consistency-readonly-note">
+        <strong>Step 3.1.1 Safe Cleanup uses preview + revalidation</strong>
+        <p>The scanner still treats unknown/manual resources as Review-only. Safe Cleanup can act only on explicitly supported PenguinPanel-owned candidates. The server rebuilds the cleanup plan after taking the provisioning lock, so stale browser data can never authorize deletion.</p>
+    </div>
+
+    @if (report is null)
+    {
+        <section class="panel consistency-empty">
+            <div class="friendly-empty-state">
+                <div class="empty-illustration">⌕</div>
+                <div>
+                    <h2>Ready to inspect the node</h2>
+                    <p>Run a full scan to compare the actual Hyper-V host with PenguinPanel and WHMCS state.</p>
+                    <button class="button primary" @onclick="RunScan" disabled="@busy">Run Full Scan</button>
+                </div>
+            </div>
+        </section>
+    }
+    else
+    {
+        <section class="panel">
+            <div class="panel-head">
+                <div>
+                    <h2>Node consistency: @StatusText(report.OverallStatus)</h2>
+                    <span class="muted">Last scan: @report.ScannedAt.ToLocalTime()</span>
+                </div>
+                <span class="pill @SeverityPill(report.OverallStatus)">@StatusText(report.OverallStatus)</span>
+            </div>
+
+            <div class="consistency-summary-grid">
+                <div><span>Hyper-V VMs</span><strong>@report.HyperVVmCount</strong></div>
+                <div><span>Profiles</span><strong>@report.ProfileCount</strong></div>
+                <div><span>WHMCS services</span><strong>@report.WhmcsServiceCount</strong></div>
+                <div><span>NAT mappings</span><strong>@report.NatMappingCount</strong></div>
+                <div><span>Managed firewall</span><strong>@report.ManagedFirewallRuleCount</strong></div>
+                <div><span>Storage disks</span><strong>@report.StorageDiskCount</strong></div>
+            </div>
+
+            <div class="consistency-severity-grid">
+                <button class='@FilterClass("all")' @onclick='() => SetFilter("all")'>
+                    <span>All findings</span><strong>@report.Issues.Count</strong>
+                </button>
+                <button class='@FilterClass("critical")' @onclick='() => SetFilter("critical")'>
+                    <span>Critical</span><strong>@report.CriticalCount</strong>
+                </button>
+                <button class='@FilterClass("warning")' @onclick='() => SetFilter("warning")'>
+                    <span>Warnings</span><strong>@report.WarningCount</strong>
+                </button>
+                <button class='@FilterClass("review")' @onclick='() => SetFilter("review")'>
+                    <span>Review</span><strong>@report.ReviewCount</strong>
+                </button>
+                <button class='@FilterClass("cleanup")' @onclick='() => SetFilter("cleanup")'>
+                    <span>Future safe-cleanup candidates</span><strong>@report.SafeCleanupCandidateCount</strong>
+                </button>
+            </div>
+        </section>
+
+        <section class="panel">
+            <div class="panel-head">
+                <div>
+                    <h2>Findings</h2>
+                    <span class="muted">@FilteredIssues().Count issue(s) in this view</span>
+                </div>
+            </div>
+
+            @if (report.Issues.Count == 0)
+            {
+                <div class="notice-card success-note">
+                    <strong>No consistency problems found 🎉</strong>
+                    <p>Hyper-V and PenguinPanel's managed state matched for the checks included in Step 3.1.1.</p>
+                </div>
+            }
+            else if (FilteredIssues().Count == 0)
+            {
+                <div class="friendly-empty-state compact-empty">
+                    <div class="empty-illustration">✓</div>
+                    <div>
+                        <h2>No findings in this filter</h2>
+                        <p>Choose another severity above to inspect the remaining scan results.</p>
+                    </div>
+                </div>
+            }
+            else
+            {
+                <div class="table-wrap consistency-table-wrap">
+                    <table class="data-table consistency-table">
+                        <thead>
+                            <tr>
+                                <th>Severity</th>
+                                <th>Category</th>
+                                <th>Resource</th>
+                                <th>Finding</th>
+                                <th>Suggested action</th>
+                                <th>Cleanup</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            @foreach (var issue in FilteredIssues())
+                            {
+                                <tr>
+                                    <td><span class="pill @SeverityPill(issue.Severity)">@StatusText(issue.Severity)</span></td>
+                                    <td><strong>@issue.Category</strong></td>
+                                    <td><code>@issue.Resource</code></td>
+                                    <td>
+                                        <strong>@issue.Summary</strong>
+                                        @if (!string.IsNullOrWhiteSpace(issue.Details))
+                                        {
+                                            <div class="consistency-details">@issue.Details</div>
+                                        }
+                                    </td>
+                                    <td>@issue.SuggestedAction</td>
+                                    <td>
+                                        @if (issue.SafeCleanupCandidate)
+                                        {
+                                            <span class="pill consistency-candidate">3.1.1 candidate</span>
+                                        }
+                                        else
+                                        {
+                                            <span class="muted">Review only</span>
+                                        }
+                                    </td>
+                                </tr>
+                            }
+                        </tbody>
+                    </table>
+                </div>
+            }
+        </section>
+
+        @if (cleanupPlan is not null)
+        {
+            <section class="panel consistency-cleanup-panel">
+                <div class="panel-head">
+                    <div>
+                        <h2>Safe Cleanup Preview</h2>
+                        <span class="muted">Generated: @cleanupPlan.GeneratedAt.ToLocalTime() • @cleanupPlan.Actions.Count supported action(s)</span>
+                    </div>
+                    <div class="button-row">
+                        <button class="button" @onclick="SelectAllCleanup" disabled="@(busy || cleanupPlan.Actions.Count == 0)">Select all safe</button>
+                        <button class="button" @onclick="ClearCleanupSelection" disabled="@(busy || selectedCleanupKeys.Count == 0)">Clear selection</button>
+                    </div>
+                </div>
+
+                <div class="notice-card consistency-cleanup-guard">
+                    <strong>Hard safety boundaries</strong>
+                    <p>Safe Cleanup will not delete Hyper-V VMs, VHD/VHDX files, unknown/manual resources, WHMCS services, or audit/history data. Every selected action is re-scanned and revalidated on the server immediately before execution.</p>
+                </div>
+
+                @if (cleanupPlan.Actions.Count == 0)
+                {
+                    <div class="notice-card success-note">
+                        <strong>No supported Safe Cleanup actions are currently available.</strong>
+                        <p>Critical and Review findings may still require manual repair, but PenguinPanel has nothing it can prove safe to remove automatically.</p>
+                    </div>
+                }
+                else
+                {
+                    <div class="consistency-cleanup-list">
+                        @foreach (var action in cleanupPlan.Actions)
+                        {
+                            <label class="consistency-cleanup-action">
+                                <input type="checkbox"
+                                       checked="@selectedCleanupKeys.Contains(action.ActionKey)"
+                                       @onchange="args => ToggleCleanup(action.ActionKey, args)"
+                                       disabled="@busy" />
+                                <div>
+                                    <div class="consistency-cleanup-action-head">
+                                        <strong>@CleanupKindText(action.Kind)</strong>
+                                        <code>@action.Resource</code>
+                                    </div>
+                                    <p>@action.Summary</p>
+                                    <span>@action.Details</span>
+                                </div>
+                            </label>
+                        }
+                    </div>
+
+                    <div class="consistency-cleanup-confirm">
+                        <div>
+                            <strong>@selectedCleanupKeys.Count selected</strong>
+                            <p class="muted">Type <code>CLEANUP</code> exactly. PenguinPanel will rebuild the plan under the provisioning lock before touching anything.</p>
+                        </div>
+                        <input @bind="cleanupConfirmation"
+                               autocomplete="off"
+                               placeholder="Type CLEANUP"
+                               disabled="@busy" />
+                        <button class="button danger"
+                                @onclick="ExecuteSafeCleanup"
+                                disabled="@(!CanExecuteCleanup())">
+                            Clean Selected Safe Items
+                        </button>
+                    </div>
+                }
+
+                @if (cleanupResult is not null)
+                {
+                    <hr class="soft-line" />
+                    <div class="panel-head sub-head">
+                        <div>
+                            <h2>Last cleanup result</h2>
+                            <span class="muted">@cleanupResult.CompletedAt.ToLocalTime()</span>
+                        </div>
+                        <span class="muted">
+                            Applied @cleanupResult.AppliedCount •
+                            Skipped @cleanupResult.SkippedCount •
+                            Failed @cleanupResult.FailedCount
+                        </span>
+                    </div>
+
+                    <div class="consistency-cleanup-results">
+                        @foreach (var item in cleanupResult.Items)
+                        {
+                            <div class='consistency-cleanup-result @CleanupResultClass(item.Status)'>
+                                <strong>@CleanupResultText(item.Status): @item.Resource</strong>
+                                <span>@item.Message</span>
+                            </div>
+                        }
+                    </div>
+                }
+            </section>
+        }
+    }
+}
+
+@code {
+    private ConsistencyScanReport? report;
+    private ConsistencyCleanupPlan? cleanupPlan;
+    private ConsistencyCleanupResult? cleanupResult;
+    private readonly HashSet<string> selectedCleanupKeys = new(StringComparer.OrdinalIgnoreCase);
+    private string cleanupConfirmation = string.Empty;
+    private bool busy;
+    private string filter = "all";
+    private string? message;
+    private string messageClass = "alert success";
+
+    private async Task RunScan()
+    {
+        if (busy || Session.User?.IsAdmin != true)
+        {
+            return;
+        }
+
+        busy = true;
+        message = null;
+
+        try
+        {
+            report = await Panel.GetConsistencyScanAsync(Session.User);
+            cleanupPlan = null;
+            cleanupResult = null;
+            selectedCleanupKeys.Clear();
+            cleanupConfirmation = string.Empty;
+            filter = "all";
+            messageClass = report.CriticalCount > 0 ? "alert" : "alert success";
+            message = report.Issues.Count == 0
+                ? "Consistency scan completed. No findings."
+                : $"Consistency scan completed: {report.CriticalCount} critical, {report.WarningCount} warning, {report.ReviewCount} review.";
+        }
+        catch (Exception ex)
+        {
+            messageClass = "alert";
+            message = ex.Message;
+        }
+        finally
+        {
+            busy = false;
+        }
+    }
+
+    private async Task PreviewSafeCleanup()
+    {
+        if (busy || Session.User?.IsAdmin != true)
+        {
+            return;
+        }
+
+        busy = true;
+        message = null;
+
+        try
+        {
+            cleanupPlan = await Panel.GetConsistencySafeCleanupPlanAsync(Session.User);
+            cleanupResult = null;
+            selectedCleanupKeys.Clear();
+            cleanupConfirmation = string.Empty;
+            messageClass = "alert success";
+            message = cleanupPlan.Actions.Count == 0
+                ? "Safe Cleanup preview completed. No supported automatic cleanup actions are currently available."
+                : $"Safe Cleanup preview completed: {cleanupPlan.Actions.Count} supported action(s). Nothing has been changed.";
+        }
+        catch (Exception ex)
+        {
+            messageClass = "alert";
+            message = ex.Message;
+        }
+        finally
+        {
+            busy = false;
+        }
+    }
+
+    private async Task ExecuteSafeCleanup()
+    {
+        if (busy || Session.User?.IsAdmin != true || !CanExecuteCleanup())
+        {
+            return;
+        }
+
+        busy = true;
+        message = null;
+
+        try
+        {
+            cleanupResult = await Panel.ExecuteConsistencySafeCleanupAsync(
+                Session.User,
+                selectedCleanupKeys.ToList(),
+                cleanupConfirmation);
+
+            report = cleanupResult.Report;
+            cleanupPlan = await Panel.GetConsistencySafeCleanupPlanAsync(Session.User);
+            selectedCleanupKeys.Clear();
+            cleanupConfirmation = string.Empty;
+            filter = "all";
+
+            messageClass = cleanupResult.FailedCount > 0 ? "alert" : "alert success";
+            message = $"Safe Cleanup finished: {cleanupResult.AppliedCount} applied, {cleanupResult.SkippedCount} skipped after revalidation, {cleanupResult.FailedCount} failed.";
+        }
+        catch (Exception ex)
+        {
+            messageClass = "alert";
+            message = ex.Message;
+        }
+        finally
+        {
+            busy = false;
+        }
+    }
+
+    private bool CanExecuteCleanup() =>
+        !busy
+        && selectedCleanupKeys.Count > 0
+        && string.Equals(cleanupConfirmation.Trim(), "CLEANUP", StringComparison.Ordinal);
+
+    private void ToggleCleanup(string actionKey, ChangeEventArgs args)
+    {
+        if (args.Value is bool isChecked && isChecked)
+        {
+            selectedCleanupKeys.Add(actionKey);
+        }
+        else
+        {
+            selectedCleanupKeys.Remove(actionKey);
+        }
+    }
+
+    private void SelectAllCleanup()
+    {
+        selectedCleanupKeys.Clear();
+        if (cleanupPlan is null)
+        {
+            return;
+        }
+
+        foreach (var action in cleanupPlan.Actions)
+        {
+            selectedCleanupKeys.Add(action.ActionKey);
+        }
+    }
+
+    private void ClearCleanupSelection()
+    {
+        selectedCleanupKeys.Clear();
+        cleanupConfirmation = string.Empty;
+    }
+
+    private static string CleanupKindText(string kind) => kind.ToLowerInvariant() switch
+    {
+        "orphan-nat" => "WinNAT",
+        "orphan-firewall" => "Host firewall",
+        "stale-panel-state" => "Stale PenguinPanel state",
+        "stale-assignment" => "User assignment",
+        "stale-recovery" => "Recovery record",
+        _ => kind
+    };
+
+    private static string CleanupResultText(string status) => status.ToLowerInvariant() switch
+    {
+        "applied" => "Applied",
+        "skipped" => "Skipped",
+        "failed" => "Failed",
+        _ => status
+    };
+
+    private static string CleanupResultClass(string status) => status.ToLowerInvariant() switch
+    {
+        "applied" => "cleanup-applied",
+        "skipped" => "cleanup-skipped",
+        "failed" => "cleanup-failed",
+        _ => string.Empty
+    };
+
+    private IReadOnlyList<ConsistencyIssue> FilteredIssues()
+    {
+        if (report is null)
+        {
+            return [];
+        }
+
+        return filter switch
+        {
+            "critical" => report.Issues.Where(item => item.Severity.Equals("critical", StringComparison.OrdinalIgnoreCase)).ToList(),
+            "warning" => report.Issues.Where(item => item.Severity.Equals("warning", StringComparison.OrdinalIgnoreCase)).ToList(),
+            "review" => report.Issues.Where(item => item.Severity.Equals("review", StringComparison.OrdinalIgnoreCase)).ToList(),
+            "cleanup" => report.Issues.Where(item => item.SafeCleanupCandidate).ToList(),
+            _ => report.Issues
+        };
+    }
+
+    private void SetFilter(string value) => filter = value;
+
+    private string FilterClass(string value) =>
+        string.Equals(filter, value, StringComparison.OrdinalIgnoreCase)
+            ? "consistency-filter active"
+            : "consistency-filter";
+
+    private static string StatusText(string value) => value.ToLowerInvariant() switch
+    {
+        "critical" => "Critical",
+        "warning" => "Warning",
+        "review" => "Review",
+        "healthy" => "Healthy",
+        _ => value
+    };
+
+    private static string SeverityPill(string value) => value.ToLowerInvariant() switch
+    {
+        "critical" => "offline",
+        "warning" => "warning",
+        "review" => "consistency-review",
+        "healthy" => "online",
+        _ => string.Empty
+    };
+}

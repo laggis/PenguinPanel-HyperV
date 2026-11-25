@@ -23,21 +23,9 @@ else if (string.IsNullOrWhiteSpace(VmName))
 }
 else if (loading)
 {
-    <section class="server-loading-shell" aria-live="polite">
-        <div class="server-loading-card">
-            <div class="server-loading-glow"></div>
-            <div class="server-loading-icon" aria-hidden="true">🐧</div>
-            <span class="eyebrow">PenguinPanel</span>
-            <h1>Preparing your virtual server</h1>
-            <p>We are checking the power state, resources, access details, and network profile for <strong>@VmName</strong>.</p>
-            <div class="server-loading-bar" aria-hidden="true"><span></span></div>
-            <div class="server-loading-steps" aria-hidden="true">
-                <span>Power</span>
-                <span>Resources</span>
-                <span>Network</span>
-            </div>
-            <small>This usually only takes a few seconds.</small>
-        </div>
+    <section class="vm-loading">
+        <h1>@VmName</h1>
+        <p role="status">Loading server details…</p>
     </section>
 }
 else if (vm is null)
@@ -75,6 +63,14 @@ else
         @if (CanViewTab("resources"))
         {
             <button class='@TabClass("resources")' @onclick='() => OpenTab("resources")'>Resources</button>
+        }
+        @if (CanViewTab("monitoring"))
+        {
+            <button class='@TabClass("monitoring")' @onclick='() => OpenTab("monitoring")'>Monitoring</button>
+        }
+        @if (Session.User!.IsAdmin && CanViewTab("health"))
+        {
+            <button class='@TabClass("health")' @onclick='() => OpenTab("health")'>Health</button>
         }
         @if (CanViewTab("access"))
         {
@@ -115,13 +111,13 @@ else
 
             <div class="mini-stats">
                 <div><span>State</span><strong>@PrettyState(vm.State)</strong></div>
-                <div><span>CPU</span><strong>@vm.CpuUsage%</strong></div>
+                <div><span>CPU usage</span><strong>@vm.CpuUsage%</strong></div>
                 <div><span>Memory</span><strong>@FormatBytes(vm.MemoryAssigned)</strong></div>
                 <div><span>Uptime</span><strong>@FormatUptime(vm.Uptime)</strong></div>
-                <div><span>RDP</span><strong>@RdpText()</strong></div>
+                <div class="endpoint-stat"><span>RDP</span><strong>@RdpText()</strong></div>
                 @if (networkProfile.EnableFiveM && networkProfile.FiveMExternalPort is > 0)
                 {
-                    <div><span>FiveM</span><strong>@FiveMText()</strong></div>
+                    <div class="endpoint-stat"><span>FiveM</span><strong>@FiveMText()</strong></div>
                 }
             </div>
 
@@ -172,11 +168,110 @@ else
             {
                 <section>
                     <div class="panel-head">
-                        <h2>Remote Desktop</h2>
-                        <span class="muted">RDP console access for this virtual server</span>
+                        <h2>@(UseHyperVBasicConsole() ? "Hyper-V Console" : "Remote Desktop")</h2>
+                        <span class="muted">@(UseHyperVBasicConsole() ? "Boot-level VM display and input through the Hyper-V host" : "RDP console access for this virtual server")</span>
                     </div>
 
-                    @if (!HasRdpTarget())
+                    @if (UseHyperVBasicConsole())
+                    {
+                        <div class="hyperv-console-layout">
+                            <div class="hyperv-console-card">
+                                <div class="hyperv-console-toolbar">
+                                    <div>
+                                        <span class="dot-live"></span>
+                                        <strong>@vm.Name</strong>
+                                        <span class="hyperv-console-mode">HYPER-V BASIC SESSION</span>
+                                    </div>
+                                    <div class="button-row settings-actions">
+                                        <button class="button mini" @onclick="RefreshHyperVConsoleNow" disabled="@hyperVConsoleBusy">Refresh</button>
+                                        <button class="button mini" @onclick="SendHyperVConsoleCtrlAltDelete" disabled="@hyperVConsoleBusy">Ctrl + Alt + Del</button>
+                                        <details class="hyperv-console-key-menu">
+                                            <summary class="button mini">Send keys</summary>
+                                            <div class="hyperv-console-key-popover">
+                                                <button class="button mini" @onclick='() => SendHyperVConsoleShortcut("ctrl-esc")' disabled="@hyperVConsoleBusy">Ctrl + Esc</button>
+                                                <button class="button mini" @onclick='() => SendHyperVConsoleShortcut("alt-tab")' disabled="@hyperVConsoleBusy">Alt + Tab</button>
+                                                <button class="button mini" @onclick='() => SendHyperVConsoleShortcut("alt-f4")' disabled="@hyperVConsoleBusy">Alt + F4</button>
+                                                <button class="button mini" @onclick='() => SendHyperVConsoleShortcut("win")' disabled="@hyperVConsoleBusy">Windows key</button>
+                                            </div>
+                                        </details>
+                                        @if (HasRdpTarget())
+                                        {
+                                            <a class="button mini" href="@RdpDataUri()" download="@RdpFileName()">Open RDP</a>
+                                        }
+                                    </div>
+                                </div>
+
+                                @if (!IsConsoleAvailableState(vm.State))
+                                {
+                                    <div class="hyperv-console-offline">
+                                        <div class="rdp-monitor-icon offline-monitor">⏻</div>
+                                        <h3>The VM is @PrettyState(vm.State)</h3>
+                                        <p>Start it and this console will begin showing the Hyper-V video output during boot.</p>
+                                        @if (CanUsePowerActions())
+                                        {
+                                            <button class="button primary" @onclick='() => Run("start")' disabled='@(!CanRunPowerAction("start"))'>Start server</button>
+                                        }
+                                    </div>
+                                }
+                                else if (hyperVConsoleFrame is null)
+                                {
+                                    <div class="hyperv-console-loading">
+                                        <div class="server-loading-icon" aria-hidden="true">🐧</div>
+                                        <strong>Connecting to the Hyper-V display...</strong>
+                                        <p>@(string.IsNullOrWhiteSpace(hyperVConsoleError) ? "Waiting for the first framebuffer from VMMS." : hyperVConsoleError)</p>
+                                        <button class="button" @onclick="RefreshHyperVConsoleNow" disabled="@hyperVConsoleBusy">Try again</button>
+                                    </div>
+                                }
+                                else
+                                {
+                                    <div class="hyperv-console-screen-wrap" style="@HyperVConsoleViewportStyle()">
+                                        <img @ref="hyperVConsoleSurface"
+                                             class="hyperv-console-screen"
+                                             src="@hyperVConsoleFrame.DataUri"
+                                             alt="Live Hyper-V console for @vm.Name"
+                                             tabindex="0"
+                                             draggable="false" />
+                                        <div class="hyperv-console-screen-hint">
+                                            Click the VM screen to focus it, then type normally. Right-click sends a right mouse click.
+                                        </div>
+                                    </div>
+                                }
+
+                                <div class="hyperv-console-statusbar">
+                                    <span>@HyperVConsoleStatusText()</span>
+                                    <span>@HyperVConsoleResolutionText()</span>
+                                    <span>@HyperVConsoleLastFrameText()</span>
+                                </div>
+
+                                @if (!string.IsNullOrWhiteSpace(hyperVConsoleError))
+                                {
+                                    <div class="notice-card compact-notice danger-note">
+                                        <strong>Console warning</strong>
+                                        <p>@hyperVConsoleError</p>
+                                    </div>
+                                }
+                            </div>
+
+                            <aside class="rdp-details-card hyperv-console-access-card">
+                                <h3>Windows login</h3>
+                                <p class="muted">The console itself has no second login. Use the same Windows credentials you use for Remote Desktop.</p>
+                                <div class="server-info-grid single-column-info">
+                                    <div><span>Username</span><strong>@ValueOrNotSet(access.Username)</strong></div>
+                                    <div><span>Password</span><strong>@PasswordText()</strong></div>
+                                    @if (HasRdpTarget())
+                                    {
+                                        <div><span>RDP fallback</span><strong>@RdpText()</strong></div>
+                                    }
+                                </div>
+                                <div class="button-row settings-actions">
+                                    <button class="button" @onclick='() => CopyToClipboard(access.Username, "Username")' disabled="@(string.IsNullOrWhiteSpace(access.Username))">Copy username</button>
+                                    <button class="button" @onclick="() => showPassword = !showPassword">@(showPassword ? "Hide password" : "Show password")</button>
+                                    <button class="button" @onclick='() => CopyToClipboard(access.Password, "Password")' disabled="@(string.IsNullOrWhiteSpace(access.Password))">Copy password</button>
+                                </div>
+                            </aside>
+                        </div>
+                    }
+                    else if (!HasRdpTarget())
                     {
                         <div class="notice-card">
                             <strong>RDP is not configured yet</strong>
@@ -197,8 +292,8 @@ else
                                 {
                                     <div class="rdp-placeholder-screen rdp-offline-screen">
                                         <div class="rdp-monitor-icon offline-monitor">⏻</div>
-                                        <h3>Console unavailable while the server is @PrettyState(vm.State)</h3>
-                                        <p>The browser console will open after the virtual server is running. PenguinPanel blocks Guacamole from loading while the VM is offline, so clients do not get stuck in a reconnect loop.</p>
+                                        <h3>Remote Desktop unavailable while the server is @PrettyState(vm.State)</h3>
+                                        <p>Start the virtual server before connecting with Windows Remote Desktop. No browser gateway or separate console service is required.</p>
                                         <div class="button-row big-actions centered-actions">
                                             @if (CanUsePowerActions())
                                             {
@@ -206,6 +301,46 @@ else
                                             }
                                             <button class="button" @onclick="() => Load()">Refresh state</button>
                                         </div>
+                                    </div>
+                                }
+                                else if (UseNativeRdpConsole())
+                                {
+                                    <div class="native-rdp-console">
+                                        <div class="native-rdp-hero">
+                                            <div class="rdp-monitor-icon native-rdp-icon">▣</div>
+                                            <div>
+                                                <span class="native-rdp-badge">WINDOWS REMOTE DESKTOP</span>
+                                                <h3>Connect to @vm.Name</h3>
+                                                <p>Uses the normal Windows Remote Desktop client directly to <strong>@RdpText()</strong>. No Guacamole, browser gateway, connection ID, or separate console account is required.</p>
+                                            </div>
+                                        </div>
+
+                                        <div class="native-rdp-connection-grid">
+                                            <div>
+                                                <span>Server</span>
+                                                <strong>@RdpText()</strong>
+                                            </div>
+                                            <div>
+                                                <span>Username</span>
+                                                <strong>@ValueOrNotSet(access.Username)</strong>
+                                            </div>
+                                            <div>
+                                                <span>Connection</span>
+                                                <strong>Direct RDP</strong>
+                                            </div>
+                                            <div>
+                                                <span>Security</span>
+                                                <strong>NLA / CredSSP</strong>
+                                            </div>
+                                        </div>
+
+                                        <div class="button-row big-actions centered-actions native-rdp-actions">
+                                            <a class="button primary" href="@RdpDataUri()" download="@RdpFileName()">Connect with Remote Desktop</a>
+                                            <button class="button" @onclick='() => CopyToClipboard(access.Password, "RDP password")' disabled="@(string.IsNullOrWhiteSpace(access.Password))">Copy password</button>
+                                            <button class="button" @onclick='() => CopyToClipboard(RdpText(), "RDP address")'>Copy address</button>
+                                        </div>
+
+                                        <p class="native-rdp-hint">Your browser may download a small <strong>.rdp</strong> file. Open it and Windows will launch Remote Desktop with the address and username already configured. Paste the copied password when Windows asks for it.</p>
                                     </div>
                                 }
                                 else if (HasEffectiveWebConsoleUrl())
@@ -220,13 +355,18 @@ else
                                 }
                                 else
                                 {
-                                    <div class="rdp-placeholder-screen">
-                                        <div class="rdp-monitor-icon">▣</div>
-                                        <h3>Remote Desktop launcher</h3>
-                                        <p>Download the generated <strong>.rdp</strong> file or copy the connection details below. To embed the desktop here, enable Guacamole in <strong>appsettings.json</strong> or add a Guacamole connection URL/ID in the Access tab.</p>
-                                        <div class="button-row big-actions centered-actions">
-                                            <a class="button primary" href="@RdpDataUri()" download="@RdpFileName()">Download .RDP</a>
-                                            <button class="button" @onclick='() => CopyToClipboard(RdpText(), "RDP address")'>Copy address</button>
+                                    <div class="native-rdp-console">
+                                        <div class="native-rdp-hero">
+                                            <div class="rdp-monitor-icon native-rdp-icon">▣</div>
+                                            <div>
+                                                <span class="native-rdp-badge">NATIVE RDP FALLBACK</span>
+                                                <h3>Browser console is unavailable</h3>
+                                                <p>The configured browser gateway is not available, so PenguinPanel has safely fallen back to normal Windows Remote Desktop.</p>
+                                            </div>
+                                        </div>
+                                        <div class="button-row big-actions centered-actions native-rdp-actions">
+                                            <a class="button primary" href="@RdpDataUri()" download="@RdpFileName()">Connect with Remote Desktop</a>
+                                            <button class="button" @onclick='() => CopyToClipboard(access.Password, "RDP password")' disabled="@(string.IsNullOrWhiteSpace(access.Password))">Copy password</button>
                                         </div>
                                     </div>
                                 }
@@ -267,18 +407,15 @@ else
                 <section>
                     <div class="panel-head">
                         <h2>Resource usage</h2>
-                        <span class="muted">Live virtual server snapshot</span>
+                        <span class="muted">Latest server snapshot</span>
                     </div>
                     <div class="resource-grid">
                         <div class="resource-card">
                             <div class="resource-top"><span>CPU Usage</span><strong>@vm.CpuUsage%</strong></div>
                             <div class="usage-track"><div class="usage-fill" style="width:@(Clamp(vm.CpuUsage))%"></div></div>
-                            <div class="fake-chart cpu-chart"><span style="height:@(Math.Max(8, Clamp(vm.CpuUsage)))%"></span></div>
                         </div>
                         <div class="resource-card">
                             <div class="resource-top"><span>Memory Assigned</span><strong>@FormatBytes(vm.MemoryAssigned)</strong></div>
-                            <div class="usage-track"><div class="usage-fill" style="width:@(MemoryBarPercent(vm.MemoryAssigned))%"></div></div>
-                            <div class="fake-chart memory-chart"><span style="height:@(MemoryBarPercent(vm.MemoryAssigned))%"></span></div>
                         </div>
                     </div>
                     <div class="server-info-grid">
@@ -287,6 +424,370 @@ else
                         <div><span>Assigned memory</span><strong>@FormatBytes(vm.MemoryAssigned)</strong></div>
                         <div><span>Last refresh</span><strong>@lastLoaded.ToLocalTime()</strong></div>
                     </div>
+                </section>
+            }
+            else if (activeTab == "monitoring")
+            {
+                <section>
+                    <div class="panel-head">
+                        <div>
+                            <h2>Live monitoring</h2>
+                            <p class="muted">Current Hyper-V health and I/O rates with stored performance history.</p>
+                        </div>
+                        <span class="pill @(liveMonitoring is null ? "warning" : "online")">@(liveMonitoring is null ? "Waiting for sample" : "Live")</span>
+                    </div>
+
+                    @if (!string.IsNullOrWhiteSpace(liveMonitoringError))
+                    {
+                        <div class="alert">@liveMonitoringError</div>
+                    }
+                    else if (liveMonitoring is null)
+                    {
+                        <div class="monitoring-loading">
+                            <div class="monitoring-pulse" aria-hidden="true"></div>
+                            <div><h2>Collecting live data</h2><p>Network and disk speeds need two samples before a rate can be calculated.</p></div>
+                        </div>
+                    }
+                    else
+                    {
+                        <div class="monitoring-status-row">
+                            <span class="pill @StateClass(liveMonitoring.State)">@PrettyState(liveMonitoring.State)</span>
+                            <span>Sampled @liveMonitoring.SampledAt.ToLocalTime().ToString("HH:mm:ss")</span>
+                            <span>Resource metering @(liveMonitoring.ResourceMeteringEnabled ? "enabled" : "unavailable")</span>
+                        </div>
+
+                        <div class="monitoring-host-grid server-monitoring-grid">
+                            <article class="monitoring-stat-card">
+                                <span>CPU usage</span><strong>@liveMonitoring.CpuUsagePercent%</strong>
+                                <div class="usage-track"><div class="usage-fill" style="width:@Clamp(liveMonitoring.CpuUsagePercent)%"></div></div>
+                            </article>
+                            <article class="monitoring-stat-card">
+                                <span>Memory pressure</span><strong>@liveMonitoring.MemoryPressurePercent.ToString("0")%</strong>
+                                <div class="usage-track"><div class="usage-fill" style="width:@Clamp((int)liveMonitoring.MemoryPressurePercent)%"></div></div>
+                                <small>@FormatBytes(liveMonitoring.MemoryDemandBytes) demand / @FormatBytes(liveMonitoring.MemoryAssignedBytes) assigned</small>
+                            </article>
+                            <article class="monitoring-stat-card"><span>Network receive</span><strong>@FormatRate(liveMonitoring.NetworkReceiveBytesPerSecond)</strong><small>Send @FormatRate(liveMonitoring.NetworkSendBytesPerSecond)</small></article>
+                            <article class="monitoring-stat-card"><span>Virtual disk read</span><strong>@FormatRate(liveMonitoring.DiskReadBytesPerSecond)</strong><small>Write @FormatRate(liveMonitoring.DiskWriteBytesPerSecond)</small></article>
+                        </div>
+
+                        <div class="server-info-grid">
+                            <div><span>Heartbeat</span><strong class="@(liveMonitoring.IsRunning && !liveMonitoring.HeartbeatHealthy ? "warning-text" : string.Empty)">@liveMonitoring.HeartbeatStatus</strong></div>
+                            <div><span>Network adapters</span><strong>@liveMonitoring.ConnectedNetworkAdapterCount / @liveMonitoring.NetworkAdapterCount connected</strong></div>
+                            <div><span>Uptime</span><strong>@FormatUptime(liveMonitoring.Uptime)</strong></div>
+                            <div><span>Hyper-V status</span><strong>@(string.IsNullOrWhiteSpace(liveMonitoring.Status) ? "No extra status" : liveMonitoring.Status)</strong></div>
+                        </div>
+
+                        @if (liveMonitoring.HasWarning)
+                        {
+                            <div class="notice-card compact-notice warning-note"><strong>Attention recommended.</strong> Check heartbeat, adapter connectivity, or high memory demand. PenguinPanel alerts administrators after the configured confirmation period.</div>
+                        }
+
+                        <div class="performance-history-section">
+                            <div class="panel-head">
+                                <div><span class="eyebrow">Step 3.4.3</span><h2>Performance history</h2><p class="muted">One-minute summaries with automatic long-range downsampling.</p></div>
+                                <div class="performance-range-row">
+                                    @foreach (var option in PerformanceHistoryRanges)
+                                    {
+                                        <button class="button @(performanceHistoryHours == option.Hours ? "active" : string.Empty)" @onclick="() => ChangePerformanceHistoryRange(option.Hours)" disabled="@performanceHistoryLoading">@option.Label</button>
+                                    }
+                                </div>
+                            </div>
+                            @if (!string.IsNullOrWhiteSpace(performanceHistoryError)) { <div class="alert">@performanceHistoryError</div> }
+                            <div class="performance-summary-grid">
+                                <div><span>Average CPU</span><strong>@HistoryPercentAverage(vmPerformanceHistory.Select(item => item.CpuPercent))</strong></div>
+                                <div><span>Peak CPU</span><strong>@HistoryPercentPeak(vmPerformanceHistory.Select(item => item.CpuPercent))</strong></div>
+                                <div><span>Peak memory pressure</span><strong>@HistoryPercentPeak(vmPerformanceHistory.Select(item => item.MemoryPressurePercent))</strong></div>
+                                <div><span>Peak network receive</span><strong>@HistoryRatePeak(vmPerformanceHistory.Select(item => item.NetworkReceiveBytesPerSecond))</strong></div>
+                            </div>
+                            <div class="performance-chart-grid">
+                                <PerformanceLineChart Title="CPU and memory pressure" Subtitle="Average percentage per stored time bucket" Times="@VmHistoryTimes" Series="@VmUtilizationSeries" Unit="%" />
+                                <PerformanceLineChart Title="Network throughput" Subtitle="Receive and send rate" Times="@VmHistoryTimes" Series="@VmNetworkSeries" Unit="B/s" />
+                                <PerformanceLineChart Title="Virtual disk throughput" Subtitle="Read and write rate" Times="@VmHistoryTimes" Series="@VmDiskSeries" Unit="B/s" />
+                            </div>
+                        </div>
+
+                        <div class="availability-panel">
+                            <div class="panel-head">
+                                <div><h2>VPS availability</h2><p class="muted">Unexpected shutdown, extended downtime, guest heartbeat, and recovery tracking.</p></div>
+                                <span class="pill @AvailabilityPillClass()">@AvailabilityLabel()</span>
+                            </div>
+
+                            @if (!string.IsNullOrWhiteSpace(availabilityUiMessage))
+                            {
+                                <div class="alert success">@availabilityUiMessage</div>
+                            }
+
+                            @if (availabilityState is null)
+                            {
+                                <div class="notice-card compact-notice">Availability tracking is collecting its first baseline sample.</div>
+                            }
+                            else
+                            {
+                                <div class="server-info-grid">
+                                    <div><span>Current state</span><strong>@PrettyState(availabilityState.LastState)</strong></div>
+                                    <div><span>Down since</span><strong>@FormatAvailabilityDate(availabilityState.DownSince)</strong></div>
+                                    <div><span>Last tracked sample</span><strong>@FormatAvailabilityDate(availabilityState.LastSampleAt)</strong></div>
+                                    <div><span>Maintenance silence</span><strong>@MaintenanceText()</strong></div>
+                                </div>
+                            }
+
+                            @if (Session.User!.IsAdmin)
+                            {
+                                <div class="availability-maintenance-card">
+                                    <div><strong>Maintenance silence</strong><p>Suppress unexpected-stop notifications while you work outside PenguinPanel. The long-downtime reminder waits until this window expires.</p></div>
+                                    <div class="inline-form">
+                                        <label class="inline-label">Hours<input type="number" min="1" max="720" @bind="availabilityMaintenanceHours" /></label>
+                                        <input type="text" @bind="availabilityMaintenanceReason" placeholder="Optional maintenance reason" />
+                                        <button class="button" @onclick="SetAvailabilityMaintenance" disabled="@busy">Silence alerts</button>
+                                        @if (availabilityState?.IsPlannedNow == true)
+                                        {
+                                            <button class="button danger" @onclick="ClearAvailabilityMaintenance" disabled="@busy">End silence</button>
+                                        }
+                                    </div>
+                                </div>
+                            }
+                            else
+                            {
+                                <div class="availability-preferences-card">
+                                    <div><strong>Your email notifications</strong><p>Messages use the email saved under Account. These choices only affect your account and this VPS.</p></div>
+                                    <div class="availability-preference-grid">
+                                        <label class="switch-row"><input type="checkbox" @bind="availabilityPreference.Enabled" /> Notifications enabled</label>
+                                        <label class="switch-row"><input type="checkbox" @bind="availabilityPreference.NotifyUnexpectedDown" /> Unexpected shutdown</label>
+                                        <label class="switch-row"><input type="checkbox" @bind="availabilityPreference.NotifyExtendedDowntime" /> Extended downtime reminder</label>
+                                        <label class="switch-row"><input type="checkbox" @bind="availabilityPreference.NotifyGuestUnresponsive" /> Guest OS unresponsive</label>
+                                        <label class="switch-row"><input type="checkbox" @bind="availabilityPreference.NotifyRecovery" /> Back-online recovery</label>
+                                    </div>
+                                    <button class="button primary" @onclick="SaveAvailabilityPreference" disabled="@busy">Save notification choices</button>
+                                </div>
+                            }
+
+                            <div class="panel-head availability-events-head"><h3>Recent availability events</h3><span class="muted">@availabilityEvents.Count recorded</span></div>
+                            @if (availabilityEvents.Count == 0)
+                            {
+                                <div class="notice-card compact-notice">No availability incident has been recorded for this VPS.</div>
+                            }
+                            else
+                            {
+                                <div class="monitoring-table-wrap"><table class="data-table compact-table"><thead><tr><th>Time</th><th>Event</th><th>Details</th></tr></thead><tbody>
+                                @foreach (var item in availabilityEvents.Take(10))
+                                {
+                                    <tr><td>@item.CreatedAt.ToLocalTime().ToString("yyyy-MM-dd HH:mm:ss")</td><td><span class="pill @AvailabilityEventClass(item.Severity)">@item.Title</span></td><td>@item.Message</td></tr>
+                                }
+                                </tbody></table></div>
+                            }
+
+                            <div class="self-healing-vm-panel">
+                                <div class="panel-head">
+                                    <div><h3>Safe automatic self-healing</h3><p class="muted">Capped recovery actions; never used during planned maintenance or a security hold.</p></div>
+                                    <span class="pill @SelfHealingPillClass()">@SelfHealingLabel()</span>
+                                </div>
+
+                                @if (!string.IsNullOrWhiteSpace(selfHealingUiMessage))
+                                {
+                                    <div class="alert success">@selfHealingUiMessage</div>
+                                }
+
+                                <div class="server-info-grid">
+                                    <div><span>VPS opt-in</span><strong>@(selfHealingPreference.Enabled ? "Enabled" : "Disabled")</strong></div>
+                                    <div><span>Recovery state</span><strong>@SelfHealingStatusText()</strong></div>
+                                    <div><span>Attempts</span><strong>@(selfHealingState?.AttemptCount ?? 0)</strong></div>
+                                    <div><span>Next action</span><strong>@FormatAvailabilityDate(selfHealingState?.NextAttemptAt)</strong></div>
+                                </div>
+                                @if (!string.IsNullOrWhiteSpace(selfHealingState?.LastResult))
+                                {
+                                    <div class="hint-card">@selfHealingState.LastResult</div>
+                                }
+
+                                @if (Session.User!.IsAdmin)
+                                {
+                                    <div class="availability-preferences-card self-healing-vm-settings">
+                                        <div><strong>Per-VPS recovery permission</strong><p>The global master switch must also be enabled. Heartbeat Restart is intentionally opt-in and more aggressive than Start recovery.</p></div>
+                                        <div class="availability-preference-grid">
+                                            <label class="switch-row"><input type="checkbox" @bind="selfHealingPreference.Enabled" /> Allow self-healing for this VPS</label>
+                                            <label class="switch-row"><input type="checkbox" @bind="selfHealingPreference.RecoverUnexpectedStop" /> Start after unexpected shutdown</label>
+                                            <label class="switch-row"><input type="checkbox" @bind="selfHealingPreference.RecoverUnresponsive" /> Restart after unhealthy heartbeat</label>
+                                        </div>
+                                        <div class="button-row">
+                                            <button class="button primary" @onclick="SaveSelfHealingPreference" disabled="@busy">Save VPS recovery settings</button>
+                                            <button class="button" @onclick="ResetSelfHealingState" disabled="@busy">Reset attempts</button>
+                                        </div>
+                                    </div>
+
+                                    <div class="availability-maintenance-card">
+                                        <div><strong>Self-healing safety hold</strong><p>Blocks automatic Start/Restart without changing availability emails. Abuse auto-suspension creates a long security hold automatically.</p></div>
+                                        <div class="inline-form">
+                                            <label class="inline-label">Hours<input type="number" min="1" max="8760" @bind="selfHealingHoldHours" /></label>
+                                            <input type="text" @bind="selfHealingHoldReason" placeholder="Reason for blocking automatic recovery" />
+                                            <button class="button" @onclick="SetSelfHealingHold" disabled="@busy">Set safety hold</button>
+                                            @if (selfHealingPreference.IsHeld)
+                                            {
+                                                <button class="button danger" @onclick="ClearSelfHealingHold" disabled="@busy">Clear hold</button>
+                                            }
+                                        </div>
+                                    </div>
+                                }
+
+                                <div class="panel-head availability-events-head"><h3>Recent self-healing events</h3><span class="muted">@selfHealingEvents.Count recorded</span></div>
+                                @if (selfHealingEvents.Count == 0)
+                                {
+                                    <div class="notice-card compact-notice">No automatic recovery action has been recorded for this VPS.</div>
+                                }
+                                else
+                                {
+                                    <div class="monitoring-table-wrap"><table class="data-table compact-table"><thead><tr><th>Time</th><th>Status</th><th>Attempt</th><th>Details</th></tr></thead><tbody>
+                                    @foreach (var item in selfHealingEvents.Take(10))
+                                    {
+                                        <tr><td>@item.CreatedAt.ToLocalTime().ToString("yyyy-MM-dd HH:mm:ss")</td><td><span class="pill @SelfHealingEventClass(item.Status)">@SelfHealingEventText(item.EventType)</span></td><td>@(item.AttemptNumber == 0 ? "—" : item.AttemptNumber.ToString())</td><td>@item.Message</td></tr>
+                                    }
+                                    </tbody></table></div>
+                                }
+                            </div>
+                        </div>
+                    }
+                </section>
+            }
+            else if (activeTab == "health" && Session.User!.IsAdmin)
+            {
+                <section>
+                    <div class="panel-head">
+                        <h2>Health &amp; Repair Centre</h2>
+                        <span class="muted">Verify PenguinPanel's Hyper-V, NAT, firewall, RDP and recovery state</span>
+                    </div>
+
+                    @if (healthReport is null)
+                    {
+                        <div class="friendly-empty-state">
+                            <div class="empty-illustration">+</div>
+                            <div>
+                                <h2>No diagnosis yet</h2>
+                                <p>Run a full diagnosis to compare this VPS against its saved PenguinPanel network and recovery configuration.</p>
+                                <button class="button primary" @onclick="RunHealthDiagnosis" disabled="@busy">Run Full Diagnosis</button>
+                            </div>
+
+                            @if (reinstallConfirmPending)
+                            {
+                                <div class="reinstall-confirm-card full-row" role="alert" aria-live="polite">
+                                    <div class="reinstall-confirm-icon" aria-hidden="true">!</div>
+                                    <div class="reinstall-confirm-copy">
+                                        <strong>Are you sure you want to reinstall this server?</strong>
+                                        <p>
+                                            This will <strong>permanently erase all files and data</strong> currently stored on this VPS
+                                            and install <strong>@pendingReinstallTemplateName</strong>.
+                                        </p>
+                                        <p class="reinstall-confirm-backup">
+                                            Make sure you have a backup of anything important before continuing.
+                                        </p>
+                                        <div class="reinstall-confirm-summary">
+                                            <span>Windows password</span>
+                                            <strong>
+                                                @(pendingReinstallPasswordWillBeGenerated
+                                                    ? "PenguinPanel will generate one and email it to you"
+                                                    : "Your chosen password will be used")
+                                            </strong>
+                                        </div>
+                                    </div>
+                                    <div class="reinstall-confirm-actions">
+                                        <button class="button danger"
+                                                @onclick="ConfirmPendingReinstall"
+                                                disabled="@(busy || reinstallInProgress)">
+                                            Yes, reinstall my server
+                                        </button>
+                                        <button class="button"
+                                                @onclick="CancelPendingReinstall"
+                                                disabled="@(busy || reinstallInProgress)">
+                                            Cancel
+                                        </button>
+                                    </div>
+                                </div>
+                            }
+                        </div>
+                    }
+                    else
+                    {
+                        <div class="notice-card compact-notice @(HealthNoticeClass(healthReport.OverallStatus))">
+                            <strong>Overall health: @HealthStatusText(healthReport.OverallStatus)</strong>
+                            <p>@HealthSummaryText()</p>
+                            <p class="muted">Last checked: @healthReport.CheckedAt.ToLocalTime()</p>
+                        </div>
+
+                        <div class="server-info-grid">
+                            <div><span>Healthy</span><strong>@HealthCount("healthy")</strong></div>
+                            <div><span>Warnings</span><strong>@HealthCount("warning")</strong></div>
+                            <div><span>Critical</span><strong>@HealthCount("critical")</strong></div>
+                            <div><span>Skipped</span><strong>@HealthCount("skipped")</strong></div>
+                        </div>
+
+                        <div class="button-row big-actions">
+                            <button class="button" @onclick="RunHealthDiagnosis" disabled="@busy">Run Full Diagnosis</button>
+                            <button class="button primary" @onclick="RepairHealthProblems" disabled="@busy">Repair PenguinPanel-managed Problems</button>
+                        </div>
+
+                        <div class="notice-card compact-notice">
+                            <strong>Safe repair scope</strong>
+                            <p>Repair re-applies WinNAT + host firewall, verifies the Windows RDP listener, syncs the VM-side firewall, synchronizes the configured DNS server list, and creates/rotates PenguinRecovery. It deliberately does <strong>not</strong> rewrite the guest IP address or gateway automatically; use Network → Repair guest internet when those settings actually need repair.</p>
+                        </div>
+
+                        <div class="table-wrap compact-table-wrap">
+                            <table class="data-table compact-table">
+                                <thead>
+                                    <tr>
+                                        <th>Check</th>
+                                        <th>Status</th>
+                                        <th>Result</th>
+                                        <th>Details</th>
+                                        <th>Repair</th>
+                                    </tr>
+                                </thead>
+                                <tbody>
+                                    @foreach (var check in healthReport.Checks)
+                                    {
+                                        <tr>
+                                            <td><strong>@check.Name</strong></td>
+                                            <td><span class="pill @HealthPillClass(check.Status)">@HealthStatusText(check.Status)</span></td>
+                                            <td>@check.Summary</td>
+                                            <td class="muted">@check.Details</td>
+                                            <td>@(check.Repairable ? "Automatic" : "Observe")</td>
+                                        </tr>
+                                    }
+                                </tbody>
+                            </table>
+                        </div>
+
+                        @if (healthRepairResult is not null)
+                        {
+                            <hr class="soft-line" />
+                            <div class="panel-head sub-head">
+                                <h2>Last repair run</h2>
+                                <span class="muted">@healthRepairResult.Message</span>
+                            </div>
+
+                            @if (healthRepairResult.Actions.Count > 0)
+                            {
+                                <div class="notice-card compact-notice success-note">
+                                    <strong>Repair actions</strong>
+                                    <ul>
+                                        @foreach (var action in healthRepairResult.Actions)
+                                        {
+                                            <li>@action</li>
+                                        }
+                                    </ul>
+                                </div>
+                            }
+
+                            @if (healthRepairResult.Warnings.Count > 0)
+                            {
+                                <div class="notice-card compact-notice danger-note">
+                                    <strong>Warnings</strong>
+                                    <ul>
+                                        @foreach (var warning in healthRepairResult.Warnings)
+                                        {
+                                            <li>@warning</li>
+                                        }
+                                    </ul>
+                                </div>
+                            }
+                        }
+                    }
                 </section>
             }
             else if (activeTab == "access")
@@ -307,7 +808,7 @@ else
                         <div><span>SSH</span><strong>@SshText()</strong></div>
                         <div><span>Username</span><strong>@ValueOrNotSet(access.Username)</strong></div>
                         <div><span>Password</span><strong>@PasswordText()</strong></div>
-                        <div><span>Browser console</span><strong>@BrowserConsoleStatus()</strong></div>
+                        <div><span>Console mode</span><strong>@ConsoleAccessStatus()</strong></div>
                     </div>
                     <div class="button-row settings-actions">
                         <button class="button" @onclick="() => showPassword = !showPassword">@(showPassword ? "Hide password" : "Show password")</button>
@@ -324,7 +825,7 @@ else
                                 <button class="button" @onclick="VerifyRdpListener" disabled="@(busy || rdpListenerChecking || rdpListenerChanging || string.IsNullOrWhiteSpace(access.Username) || string.IsNullOrWhiteSpace(access.Password))">@(rdpListenerChecking ? "Checking..." : "Verify Windows RDP listener")</button>
                                 <button class="button primary soft" @onclick="SyncRdpPortToPublic" disabled="@(busy || rdpListenerChecking || rdpListenerChanging || string.IsNullOrWhiteSpace(access.Username) || string.IsNullOrWhiteSpace(access.Password))">@(rdpListenerChanging ? "Changing RDP port..." : "Match Windows RDP to public port")</button>
                             </div>
-                            <p class="muted">New VPSes can use the same public and Windows RDP port. Older VPSes may still listen on TCP 3389. <strong>Match Windows RDP to public port</strong> updates Windows, the guest firewall, and WinNAT together. Any active RDP session can disconnect for a few seconds while Remote Desktop Services restarts.</p>
+                            <p class="muted">New VPSes use the same public and Windows RDP port for TCP + UDP. Older VPSes may still listen on port 3389. <strong>Match Windows RDP to public port</strong> updates Windows, the guest firewall, and WinNAT together. Any active RDP session can disconnect for a few seconds while Remote Desktop Services restarts.</p>
                         </div>
                     }
 
@@ -341,6 +842,17 @@ else
                             <button class="button primary" @onclick="ChangeRemoteDesktopPassword" disabled="@(busy || string.IsNullOrWhiteSpace(remoteDesktopPassword))">Change RDP password</button>
                         </div>
                     </div>
+
+                    @if (CanUseEmergencyGuestReset())
+                    {
+                        <div class="notice-card compact-notice">
+                            <strong>Forgot your Windows / RDP password?</strong>
+                            <p>You can recover access without installing any software inside the VPS. PenguinPanel uses Hyper-V PowerShell Direct and an email verification code.</p>
+                            <div class="button-row settings-actions">
+                                <button class="button" @onclick='() => OpenTab("recovery")' disabled="@busy">Open Password Recovery</button>
+                            </div>
+                        </div>
+                    }
 
                     @if (!string.IsNullOrWhiteSpace(access.Notes))
                     {
@@ -364,15 +876,32 @@ else
                             <label>SSH port<input type="number" @bind="accessSshPort" /></label>
                             <label>Username<input @bind="accessUsername" /></label>
                             <label>Password<input type="text" @bind="accessPassword" /></label>
-                            <label class="full-row">Guacamole console URL / connection ID<input @bind="accessWebConsoleUrl" placeholder="Paste the full Guacamole connection URL, or only the connection ID after /#/client/." /></label>
-                            <div class="notice-card full-row compact-notice">
-                                <strong>Guacamole preview</strong>
-                                <p>@ConsolePreviewText()</p>
-                                @if (HasEffectiveWebConsoleUrl())
-                                {
-                                    <a class="button mini" href="@EffectiveWebConsoleUrl()" target="_blank" rel="noopener noreferrer">Open current console</a>
-                                }
-                            </div>
+                            @if (UseHyperVBasicConsole())
+                            {
+                                <div class="notice-card full-row compact-notice">
+                                    <strong>Hyper-V Basic Console</strong>
+                                    <p>No Guacamole URL, VNC port, connection ID, guest network, or per-VM web-console setting is required. The console is provided directly by the Hyper-V host.</p>
+                                </div>
+                            }
+                            else if (UseNativeRdpConsole())
+                            {
+                                <div class="notice-card full-row compact-notice">
+                                    <strong>Native Windows Remote Desktop</strong>
+                                    <p>No Guacamole URL, connection ID, browser gateway, or per-VM web-console setting is required. The Console tab generates its connection directly from this VM's RDP address, port, and username.</p>
+                                </div>
+                            }
+                            else
+                            {
+                                <label class="full-row">Legacy browser console URL / connection ID<input @bind="accessWebConsoleUrl" placeholder="Optional browser-console URL or Guacamole connection ID." /></label>
+                                <div class="notice-card full-row compact-notice">
+                                    <strong>Browser console preview</strong>
+                                    <p>@ConsolePreviewText()</p>
+                                    @if (HasEffectiveWebConsoleUrl())
+                                    {
+                                        <a class="button mini" href="@EffectiveWebConsoleUrl()" target="_blank" rel="noopener noreferrer">Open current browser console</a>
+                                    }
+                                </div>
+                            }
                             <label class="full-row">Notes<textarea @bind="accessNotes"></textarea></label>
                             <div class="form-actions full-row">
                                 <button class="button primary" @onclick="SaveAccess" disabled="@busy">Save access details</button>
@@ -387,45 +916,37 @@ else
             {
                 <section>
                     <div class="panel-head">
-                        <h2>Emergency Guest Agent reset</h2>
-                        <span class="muted">Password recovery and Guest Agent status</span>
+                        <h2>Emergency password reset</h2>
+                        <span class="muted">Agentless Hyper-V recovery</span>
                     </div>
-                    <div class="notice-card compact-notice">
-                        <strong>Use this when RDP access is lost or compromised</strong>
-                        <p>This tab changes the Windows password from inside the VM through PenguinGuestAgent. It is separated from normal access details so clients can find recovery faster and avoid changing Guest Agent setup by mistake.</p>
-                    </div>
-                    @if (CanManageGuestAgent())
-                    {
-                        <div class="server-info-grid">
-                            <div><span>Agent</span><strong>@GuestAgentStatusText()</strong></div>
-                            <div><span>Last seen</span><strong>@GuestAgentLastSeenText()</strong></div>
-                            <div><span>Version</span><strong>@ValueOrNotSet(guestAgentSettings.LastAgentVersion)</strong></div>
-                            <div><span>Last IP</span><strong>@ValueOrNotSet(guestAgentSettings.LastIpAddress)</strong></div>
-                        </div>
 
+                    <div class="notice-card compact-notice">
+                        <strong>No software inside the VPS required</strong>
+                        <p>PenguinPanel uses a private per-VM recovery account over Hyper-V PowerShell Direct. It works through the Hyper-V VM bus, so the VM does not need working internet, RDP, WinRM, or PenguinGuestAgent.</p>
+                    </div>
+
+                    <div class="server-info-grid">
+                        <div><span>Agentless recovery</span><strong>@AgentlessRecoveryStatusText()</strong></div>
+                        @if (CanManageGuestAgent())
+                        {
+                            <div><span>Recovery account</span><strong>@ValueOrNotSet(recoveryAccountStatus.Username)</strong></div>
+                        }
+                        <div><span>Last rotated</span><strong>@RecoveryDateText(recoveryAccountStatus.LastRotatedAt)</strong></div>
+                        <div><span>Last used</span><strong>@RecoveryDateText(recoveryAccountStatus.LastUsedAt)</strong></div>
+                    </div>
+
+                    @if (CanUseEmergencyGuestReset())
+                    {
                         <div class="notice-card compact-notice">
-                            <strong>Agent setup</strong>
-                            <p>Generate a unique token for this VM, then install <code>PenguinGuestAgent</code> inside the Windows VM or inside your VM template.</p>
-                            @if (!string.IsNullOrWhiteSpace(generatedGuestAgentToken))
+                            <strong>Password recovery setup</strong>
+                            <p>New VPSes are prepared automatically. If recovery is not ready, you can initialize or repair it while the saved Windows password still works. No Guest Agent or EXE is required.</p>
+                            @if (CanManageGuestAgent() && !string.IsNullOrWhiteSpace(recoveryAccountStatus.LastError))
                             {
-                                <p><strong>Copy this token now. It is only shown once:</strong></p>
-                                <code>@generatedGuestAgentToken</code>
-                                <div class="button-row settings-actions">
-                                    <button class="button mini" @onclick='() => CopyToClipboard(generatedGuestAgentToken, "Guest Agent token")'>Copy token</button>
-                                </div>
+                                <p><strong>Last recovery error:</strong> @recoveryAccountStatus.LastError</p>
                             }
                             <div class="button-row settings-actions">
-                                <button class="button primary" @onclick="GenerateGuestAgentToken" disabled="@busy">Generate / rotate agent token</button>
-                                <button class="button" @onclick='() => SetGuestAgentEnabled(true)' disabled="@(busy || !guestAgentSettings.HasToken)">Enable agent</button>
-                                <button class="button danger" @onclick='() => SetGuestAgentEnabled(false)' disabled="@busy">Disable agent</button>
+                                <button class="button primary" @onclick="InitializeAgentlessRecovery" disabled="@busy">Initialize / repair password recovery</button>
                             </div>
-                        </div>
-                    }
-                    else
-                    {
-                        <div class="server-info-grid">
-                            <div><span>Password recovery</span><strong>@ClientGuestAgentStatusText()</strong></div>
-                            <div><span>Last check-in</span><strong>@GuestAgentLastSeenText()</strong></div>
                         </div>
                     }
 
@@ -436,11 +957,11 @@ else
                             <p>Emergency password reset is only available to the account owner and administrators. Sub-users can still view access details if that permission is enabled.</p>
                         </div>
                     }
-                    else if (!guestAgentSettings.IsEnabled || !guestAgentSettings.HasToken)
+                    else if (!CanUseConfiguredEmergencyRecovery())
                     {
                         <div class="notice-card compact-notice">
                             <strong>Password recovery is not ready</strong>
-                            <p>An administrator needs to install and enable the Guest Agent for this VM before emergency password reset can be used.</p>
+                            <p>Password recovery is not initialized yet. Use <strong>Initialize / repair password recovery</strong> above while your currently saved Windows password still works.</p>
                         </div>
                     }
                     else
@@ -450,25 +971,28 @@ else
                             @if (!CanManageGuestAgent())
                             {
                                 <div class="notice-card compact-notice full-row">
-                                    <strong>Safe client mode</strong>
-                                    <p>The reset uses the saved RDP username for this server. Agent setup, token rotation, and dangerous recovery options are hidden to prevent accidental lockouts.</p>
+                                    <strong>Client password recovery</strong>
+                                    <p>The reset uses your saved Windows/RDP username. The private PenguinPanel recovery account and its password are never shown to you.</p>
                                 </div>
                             }
+
                             <label>New password<input type="@EmergencyPasswordInputType" @bind="emergencyPassword" autocomplete="new-password" disabled="@busy" /></label>
                             <label>Confirm password<input type="@EmergencyPasswordInputType" @bind="emergencyConfirmPassword" autocomplete="new-password" disabled="@busy" /></label>
                             <label>Reset verification code<input @bind="emergencyVerificationCode" inputmode="numeric" autocomplete="one-time-code" placeholder="6-digit email code" disabled="@busy" /></label>
+
                             <div class="notice-card compact-notice full-row">
                                 <strong>Extra security step</strong>
-                                <p>Before queueing an emergency reset, send a one-time code to your panel account email and enter it here. This helps stop someone with an open browser session from changing a VM password without email access.</p>
+                                <p>Send a one-time code to your panel account email before the reset. Agentless recovery then changes the Windows password through Hyper-V and rotates its private recovery password automatically.</p>
                                 <div class="button-row settings-actions">
-                                    <button class="button mini" @onclick="SendEmergencyResetCode" disabled="@(busy || !guestAgentSettings.IsEnabled || !guestAgentSettings.HasToken)">Email reset code</button>
+                                    <button class="button mini" @onclick="SendEmergencyResetCode" disabled="@(busy || !CanUseConfiguredEmergencyRecovery())">Email reset code</button>
                                 </div>
                             </div>
+
                             @if (!string.IsNullOrWhiteSpace(emergencyPassword))
                             {
                                 <div class="notice-card compact-notice full-row">
                                     <strong>Emergency password ready</strong>
-                                    <p>Copy this password before queueing the reset. It is cleared from the page after the reset is queued or when the page reloads.</p>
+                                    <p>Copy this password before resetting. It is cleared from the page after a successful reset or when the page reloads.</p>
                                     <div class="server-info-grid compact-secret-grid">
                                         <div><span>Username</span><strong>@ValueOrNotSet(emergencyUsername)</strong></div>
                                         <div><span>Password</span><strong>@EmergencyPasswordText()</strong></div>
@@ -479,17 +1003,45 @@ else
                                     </div>
                                 </div>
                             }
+
                             @if (CanManageGuestAgent())
                             {
-                                <label class="check-row"><input type="checkbox" @bind="emergencyForceLogoffSessions" disabled="@busy" /> Sign out active RDP sessions</label>
-                                <label class="check-row"><input type="checkbox" @bind="emergencyRestartRemoteDesktopService" disabled="@busy" /> Restart Remote Desktop service</label>
-                                <label class="check-row"><input type="checkbox" @bind="emergencyDisableRemoteDesktopFirewall" disabled="@busy" /> Disable Windows Remote Desktop firewall rule after reset</label>
-                                <label class="check-row"><input type="checkbox" @bind="emergencyDisableOtherLocalAdministrators" disabled="@busy" /> Disable other local Administrator-group users</label>
+                                <label class="check-row"><input type="checkbox" @bind="emergencyForceLogoffSessions" disabled="@busy" /> Sign out active RDP sessions after reset</label>
+                                <label class="check-row"><input type="checkbox" @bind="emergencyRestartRemoteDesktopService" disabled="@busy" /> Restart Remote Desktop service after reset</label>
                             }
+
                             <label class="check-row"><input type="checkbox" @bind="emergencySendPasswordEmail" disabled="@busy" /> Email the new password to my panel account email</label>
+
                             <div class="form-actions full-row">
                                 <button class="button" @onclick="GenerateEmergencyPassword" disabled="@busy">Generate emergency password</button>
-                                <button class="button danger" @onclick="QueueEmergencyPasswordReset" disabled="@(busy || string.IsNullOrWhiteSpace(emergencyPassword) || (EmergencyResetCodeRequired && string.IsNullOrWhiteSpace(emergencyVerificationCode)) || !guestAgentSettings.IsEnabled || !guestAgentSettings.HasToken)">Queue emergency reset</button>
+                                <button class="button danger" @onclick="QueueEmergencyPasswordReset" disabled="@(busy || string.IsNullOrWhiteSpace(emergencyPassword) || (EmergencyResetCodeRequired && string.IsNullOrWhiteSpace(emergencyVerificationCode)) || !CanUseConfiguredEmergencyRecovery())">Reset Windows password</button>
+                            </div>
+                        </div>
+                    }
+
+                    @if (CanManageGuestAgent())
+                    {
+                        <div class="notice-card compact-notice">
+                            <strong>Legacy Guest Agent - optional fallback</strong>
+                            <p>The old PenguinGuestAgent integration is kept for existing VPSes and advanced legacy commands, but it is no longer required for normal emergency password recovery.</p>
+                            <div class="server-info-grid">
+                                <div><span>Agent</span><strong>@GuestAgentStatusText()</strong></div>
+                                <div><span>Last seen</span><strong>@GuestAgentLastSeenText()</strong></div>
+                                <div><span>Version</span><strong>@ValueOrNotSet(guestAgentSettings.LastAgentVersion)</strong></div>
+                                <div><span>Last IP</span><strong>@ValueOrNotSet(guestAgentSettings.LastIpAddress)</strong></div>
+                            </div>
+                            @if (!string.IsNullOrWhiteSpace(generatedGuestAgentToken))
+                            {
+                                <p><strong>Copy this token now. It is only shown once:</strong></p>
+                                <code>@generatedGuestAgentToken</code>
+                                <div class="button-row settings-actions">
+                                    <button class="button mini" @onclick='() => CopyToClipboard(generatedGuestAgentToken, "Guest Agent token")'>Copy token</button>
+                                </div>
+                            }
+                            <div class="button-row settings-actions">
+                                <button class="button" @onclick="GenerateGuestAgentToken" disabled="@busy">Generate / rotate legacy token</button>
+                                <button class="button" @onclick='() => SetGuestAgentEnabled(true)' disabled="@(busy || !guestAgentSettings.HasToken)">Enable legacy agent</button>
+                                <button class="button danger" @onclick='() => SetGuestAgentEnabled(false)' disabled="@busy">Disable legacy agent</button>
                             </div>
                         </div>
                     }
@@ -498,7 +1050,7 @@ else
                     {
                         <div class="table-wrap compact-table-wrap">
                             <table class="data-table compact-table">
-                                <thead><tr><th>ID</th><th>Command</th><th>Status</th><th>Created</th><th>Completed</th><th>Result</th></tr></thead>
+                                <thead><tr><th>ID</th><th>Legacy command</th><th>Status</th><th>Created</th><th>Completed</th><th>Result</th></tr></thead>
                                 <tbody>
                                     @foreach (var command in guestAgentCommands)
                                     {
@@ -515,7 +1067,6 @@ else
                             </table>
                         </div>
                     }
-
                 </section>
             }
             else if (activeTab == "network")
@@ -614,11 +1165,6 @@ else
                         <span class="muted">Firewall rules inside this Windows VPS</span>
                     </div>
 
-                    <div class="notice-card">
-                        <strong>Guest firewall, not the Hyper-V host firewall</strong>
-                        <p>These rules are created inside Windows using Hyper-V PowerShell Direct. The Network tab still controls the host WinNAT and host firewall mappings. <strong>Sync from network profile</strong> opens the VM-side RDP, FiveM, and extra internal ports saved in PenguinPanel.</p>
-                    </div>
-
                     <div class="button-row big-actions">
                         <button class="button primary" @onclick="SyncGuestFirewall" disabled="@busy">Sync from network profile</button>
                         <button class="button" @onclick="LoadGuestFirewallRules" disabled="@busy">Refresh rules</button>
@@ -711,65 +1257,397 @@ else
             {
                 <section>
                     <div class="panel-head">
-                        <h2>Backups / checkpoints</h2>
-                        <span class="muted">Restore points for this VM</span>
-                    </div>
-                    <div class="notice-card restore-safety-note">
-                        <strong>Safe restore mode</strong>
-                        <p>Restoring a checkpoint will temporarily stop this VM first. After the restore is finished, the VM stays stopped so you can start it again when you are ready.</p>
-                    </div>
-                    @if (restoreInProgress || !string.IsNullOrWhiteSpace(restoreStatus))
-                    {
-                        <div class="restore-progress-card">
-                            <div class="restore-progress-head">
-                                <strong>@(restoreInProgress ? "Restoring checkpoint" : "Last restore status")</strong>
-                                <span>@restoreProgress%</span>
-                            </div>
-                            <div class="restore-progress-track" role="progressbar" aria-valuemin="0" aria-valuemax="100" aria-valuenow="@restoreProgress">
-                                <div class="restore-progress-bar" style="@RestoreProgressStyle"></div>
-                            </div>
-                            <p>@restoreStatus</p>
+                        <div>
+                            <h2>Quick Restore Points</h2>
+                            <span class="muted">Lightweight Hyper-V rollback points for updates, scripts, and configuration changes</span>
                         </div>
-                    }
-                    <div class="inline-form checkpoint-create">
-                        <input @bind="checkpointName" placeholder="Backup name, optional" />
-                        <button class="button primary" @onclick="CreateCheckpoint" disabled="@(busy || restoreInProgress)">Create checkpoint</button>
-                        <button class="button" @onclick="LoadCheckpoints" disabled="@(busy || restoreInProgress)">Refresh</button>
+                        <button class="button" @onclick="LoadBackups" disabled="@(busy || restoreInProgress || fullBackupInProgress || fullRestoreInProgress)">Refresh</button>
                     </div>
+
+                    <div class="notice-card snapshot-info-note">
+                        <strong>Main rollback tool</strong>
+                        <p>Quick Restore Points use Hyper-V checkpoints and normally consume storage only as the VM changes. PenguinPanel prefers a Production checkpoint for server workloads. They are not independent disaster-recovery backups, so keep <strong>Full Backups</strong> for the changes you really cannot afford to lose.</p>
+                        <p class="snapshot-permanent-help"><strong>Permanent Restore Point:</strong> each VPS can protect exactly one normal restore point from age cleanup. Making a newer point permanent automatically returns the previous permanent point to normal retention.</p>
+                    </div>
+
+                    @if (quickSnapshotStorageStatus is not null)
+                    {
+                        <div class="snapshot-storage-grid">
+                            <div>
+                                <span>Restore points</span>
+                                <strong>@quickSnapshotStorageStatus.ManualRestorePointCount / @quickSnapshotStorageStatus.MaxRestorePointsPerVm</strong>
+                            </div>
+                            <div>
+                                <span>Temporary safety</span>
+                                <strong>@quickSnapshotStorageStatus.TemporarySafetyCount</strong>
+                            </div>
+                            <div class="@(quickSnapshotStorageStatus.StorageWarning ? "snapshot-storage-warning" : "")">
+                                <span>AVHDX storage</span>
+                                <strong>@FormatBytes(quickSnapshotStorageStatus.TotalAvhdxBytes)</strong>
+                            </div>
+                            <div>
+                                <span>Recommended age</span>
+                                <strong>@quickSnapshotStorageStatus.RecommendedMaxAgeDays days</strong>
+                            </div>
+                        </div>
+
+                        @if (quickSnapshotStorageStatus.StorageWarning)
+                        {
+                            <div class="notice-card compact-notice danger-note">
+                                <strong>Snapshot storage is getting large</strong>
+                                <p>The VM's Hyper-V AVHDX checkpoint chain is using about <strong>@FormatBytes(quickSnapshotStorageStatus.TotalAvhdxBytes)</strong>. Consider removing old unpinned restore points after confirming they are no longer needed.</p>
+                            </div>
+                        }
+                    }
+
+                    <div class="quick-restore-create">
+                        <label>
+                            <span>Restore point name</span>
+                            <input @bind="checkpointName"
+                                   maxlength="100"
+                                   placeholder="Example: Before FiveM update" />
+                        </label>
+                        <label>
+                            <span>Description <em>optional</em></span>
+                            <input @bind="checkpointDescription"
+                                   maxlength="500"
+                                   placeholder="Example: Updating inventory + garage scripts" />
+                        </label>
+                        <button class="button primary"
+                                @onclick="CreateCheckpoint"
+                                disabled="@(busy || restoreInProgress || fullBackupInProgress || fullRestoreInProgress || (quickSnapshotStorageStatus is not null && quickSnapshotStorageStatus.ManualRestorePointCount >= quickSnapshotStorageStatus.MaxRestorePointsPerVm))">
+                            Create restore point
+                        </button>
+                    </div>
+
                     @if (!string.IsNullOrWhiteSpace(checkpointError))
                     {
-                        <div class="alert">Could not load restore points: @checkpointError</div>
+                        <div class="alert">Could not load Quick Restore Points: @checkpointError</div>
                     }
-                    @if (checkpoints.Count == 0)
+
+                    @if (quickRestorePoints.Count == 0)
                     {
                         <div class="empty-state compact-empty">
-                            <div class="empty-icon">↺</div>
+                            <div class="empty-icon">↶</div>
                             <div>
-                                <strong>No restore points visible yet</strong>
-                                <p class="muted">Create a checkpoint, then use Refresh if it does not appear after a few seconds. Restore and delete buttons will show next to each checkpoint.</p>
+                                <strong>No Quick Restore Points yet</strong>
+                                <p class="muted">Create one before a risky update or configuration change.</p>
                             </div>
                         </div>
                     }
                     else
                     {
-                        <table class="data-table compact-table">
-                            <thead><tr><th>Name</th><th>Type</th><th>Created</th><th>Actions</th></tr></thead>
-                            <tbody>
-                                @foreach (var checkpoint in checkpoints)
-                                {
+                        <div class="table-wrap">
+                            <table class="data-table compact-table snapshot-table advanced-snapshot-table">
+                                <thead>
                                     <tr>
-                                        <td><strong>@checkpoint.Name</strong></td>
-                                        <td>@checkpoint.SnapshotType</td>
-                                        <td>@checkpoint.CreationTime.ToLocalTime()</td>
-                                        <td class="button-row">
-                                            <button class="button primary soft" @onclick="() => RestoreCheckpoint(checkpoint.Name)" disabled="@(busy || restoreInProgress)">Restore safely</button>
-                                            <button class="button danger" @onclick="() => DeleteCheckpoint(checkpoint.Name)" disabled="@(busy || restoreInProgress)">Delete</button>
-                                        </td>
+                                        <th>Name</th>
+                                        <th>Kind</th>
+                                        <th>Created</th>
+                                        <th>Retention</th>
+                                        <th>Actions</th>
                                     </tr>
-                                }
-                            </tbody>
-                        </table>
+                                </thead>
+                                <tbody>
+                                    @foreach (var point in quickRestorePoints)
+                                    {
+                                        <tr class="@(point.IsExpired ? "snapshot-expired-row" : "")">
+                                            <td>
+                                                <div class="snapshot-name-line">
+                                                    <strong>@point.Name</strong>
+                                                    @if (point.IsPinned)
+                                                    {
+                                                        <span class="pill snapshot-pin-pill">Permanent</span>
+                                                    }
+                                                    @if (point.IsTemporarySafety)
+                                                    {
+                                                        <span class="pill warning">Safety</span>
+                                                    }
+                                                </div>
+                                                @if (!string.IsNullOrWhiteSpace(point.Description))
+                                                {
+                                                    <div class="consistency-details">@point.Description</div>
+                                                }
+                                            </td>
+                                            <td>
+                                                <strong>@SnapshotTypeText(point)</strong>
+                                                <div class="consistency-details">@point.SnapshotType</div>
+                                            </td>
+                                            <td>@point.CreationTime.ToLocalTime()</td>
+                                            <td>
+                                                @if (point.IsPinned)
+                                                {
+                                                    <span class="snapshot-retention-good">Permanent</span>
+                                                }
+                                                else if (point.IsExpired)
+                                                {
+                                                    <span class="snapshot-retention-expired">Expired</span>
+                                                }
+                                                else if (point.ExpiresAt is not null)
+                                                {
+                                                    <span>@SnapshotExpiryText(point)</span>
+                                                }
+                                                else
+                                                {
+                                                    <span>Managed</span>
+                                                }
+                                            </td>
+                                            <td>
+                                                <div class="button-row snapshot-action-row">
+                                                    <button class="button primary soft"
+                                                            @onclick="() => RestoreCheckpoint(point)"
+                                                            disabled="@(busy || restoreInProgress || fullBackupInProgress || fullRestoreInProgress)">
+                                                        Restore
+                                                    </button>
+                                                    <button class="button"
+                                                            @onclick="() => ToggleSnapshotPin(point)"
+                                                            disabled="@(busy || restoreInProgress || fullBackupInProgress || fullRestoreInProgress || point.IsTemporarySafety)">
+                                                        @(point.IsPinned ? "Remove permanent" : "Make permanent")
+                                                    </button>
+                                                    <button class="button danger"
+                                                            @onclick="() => DeleteCheckpoint(point)"
+                                                            disabled="@(busy || restoreInProgress || fullBackupInProgress || fullRestoreInProgress || point.IsPinned)">
+                                                        Delete
+                                                    </button>
+                                                </div>
+                                            </td>
+                                        </tr>
+                                    }
+                                </tbody>
+                            </table>
+                        </div>
                     }
+
+                    @if (quickSnapshotStorageStatus?.ExpiredUnpinnedCount > 0)
+                    {
+                        <div class="snapshot-cleanup-bar">
+                            <div>
+                                <strong>@quickSnapshotStorageStatus.ExpiredUnpinnedCount expired unpinned restore point(s)</strong>
+                                <p>Cleanup is explicit; PenguinPanel will never silently remove a pinned restore point.</p>
+                            </div>
+                            <button class="button danger"
+                                    @onclick="CleanupExpiredSnapshots"
+                                    disabled="@(busy || restoreInProgress || fullBackupInProgress || fullRestoreInProgress)">
+                                Clean expired
+                            </button>
+                        </div>
+                    }
+
+                    @if (restoreInProgress || !string.IsNullOrWhiteSpace(restoreStatus))
+                    {
+                        <div class="restore-progress-card snapshot-restore-progress">
+                            <div class="restore-progress-head">
+                                <strong>@(restoreInProgress ? "Restoring Quick Restore Point" : "Last Quick Restore status")</strong>
+                                <span>@restoreProgress%</span>
+                            </div>
+                            <div class="restore-progress-track" role="progressbar" aria-valuemin="0" aria-valuemax="100" aria-valuenow="@restoreProgress">
+                                <div class="restore-progress-bar" style="@($"width:{restoreProgress}%")"></div>
+                            </div>
+                            <p>@restoreStatus</p>
+                        </div>
+                    }
+
+                    <hr class="backup-section-divider" />
+
+                    <div class="panel-head">
+                        <div>
+                            <h2>Full Backups</h2>
+                            <span class="muted">Independent disaster-recovery copies — larger and slower, but separate from the live VM disk chain</span>
+                        </div>
+                    </div>
+
+                    <div class="notice-card backup-real-note">
+                        <strong>These are real full-disk backups, not checkpoints</strong>
+                        <p>PenguinPanel briefly stops the VM so the copied disk is consistent. If a Hyper-V checkpoint chain exists, PenguinPanel merges that chain into a standalone backup VHDX. The VM is started again automatically after a normal backup.</p>
+                    </div>
+
+                    @if (backupStorageStatus is not null)
+                    {
+                        <div class="backup-storage-strip smart-backup-summary">
+                            <div><span>Smart storage</span><strong>@BackupStorageModeText(backupStorageStatus.SelectionMode)</strong></div>
+                            <div><span>Current recommendation</span><strong>@backupStorageStatus.RootPath</strong></div>
+                            <div><span>Free there</span><strong>@FormatBytes(backupStorageStatus.FreeBytes)</strong></div>
+                            <div><span>Safety reserve</span><strong>@FormatBytes(backupStorageStatus.ReserveBytes)</strong></div>
+                            <div><span>Manual limit</span><strong>@backupStorageStatus.MaxBackupsPerVm per VPS</strong></div>
+                        </div>
+
+                        <div class="backup-root-candidates">
+                            @foreach (var rootStatus in backupStorageStatus.Roots)
+                            {
+                                <div class="backup-root-candidate @(rootStatus.IsAvailable ? "" : "backup-root-unavailable")">
+                                    <div>
+                                        <strong>@rootStatus.Path</strong>
+                                        @if (string.Equals(rootStatus.Path, backupStorageStatus.RootPath, StringComparison.OrdinalIgnoreCase) && backupStorageStatus.IsAvailable)
+                                        {
+                                            <span class="pill online">Recommended</span>
+                                        }
+                                        else if (rootStatus.IsDefault)
+                                        {
+                                            <span class="pill">Default</span>
+                                        }
+                                    </div>
+                                    @if (rootStatus.IsAvailable)
+                                    {
+                                        <span>@FormatBytes(rootStatus.FreeBytes) free · keep @FormatBytes(rootStatus.ReserveBytes) reserve</span>
+                                    }
+                                    else
+                                    {
+                                        <span>@rootStatus.Error</span>
+                                    }
+                                </div>
+                            }
+                        </div>
+
+                        @if (!backupStorageStatus.IsAvailable)
+                        {
+                            <div class="alert">Backup storage unavailable: @backupStorageStatus.Error</div>
+                        }
+                        else
+                        {
+                            <div class="backup-name-help smart-backup-note">
+                                The recommendation above is based on current free space. When you actually create a Full Backup, PenguinPanel estimates that VM's backup size and re-selects the safest root while keeping the reserve.
+                            </div>
+                        }
+                    }
+
+                    @if (fullBackupInProgress || !string.IsNullOrWhiteSpace(fullBackupStatus))
+                    {
+                        <div class="restore-progress-card">
+                            <div class="restore-progress-head">
+                                <strong>@(fullBackupInProgress ? "Creating full backup" : "Last backup status")</strong>
+                                <span>@fullBackupProgress%</span>
+                            </div>
+                            <div class="restore-progress-track" role="progressbar" aria-valuemin="0" aria-valuemax="100" aria-valuenow="@fullBackupProgress">
+                                <div class="restore-progress-bar" style="@($"width:{fullBackupProgress}%")"></div>
+                            </div>
+                            <p>@fullBackupStatus</p>
+                        </div>
+                    }
+
+                    @if (fullRestoreInProgress || !string.IsNullOrWhiteSpace(fullRestoreStatus))
+                    {
+                        <div class="restore-progress-card restore-full-card">
+                            <div class="restore-progress-head">
+                                <strong>@(fullRestoreInProgress ? "Restoring full backup" : "Last full restore status")</strong>
+                                <span>@fullRestoreProgress%</span>
+                            </div>
+                            <div class="restore-progress-track" role="progressbar" aria-valuemin="0" aria-valuemax="100" aria-valuenow="@fullRestoreProgress">
+                                <div class="restore-progress-bar" style="@($"width:{fullRestoreProgress}%")"></div>
+                            </div>
+                            <p>@fullRestoreStatus</p>
+                        </div>
+                    }
+
+                    <div class="backup-name-form">
+                        <label>
+                            <span>Backup name</span>
+                            <input @bind="fullBackupName"
+                                   maxlength="120"
+                                   placeholder="Example: Before FiveM update" />
+                        </label>
+                        <div class="backup-name-help">
+                            Give important backups a name you will recognize later. If left blank, PenguinPanel creates a dated name automatically.
+                        </div>
+                        <button class="button primary"
+                                @onclick="CreateFullBackup"
+                                disabled="@(busy || fullBackupInProgress || fullRestoreInProgress || backupStorageStatus?.IsAvailable == false)">
+                            Create full backup
+                        </button>
+                    </div>
+
+                    @if (!string.IsNullOrWhiteSpace(fullBackupError))
+                    {
+                        <div class="alert">Could not load full backups: @fullBackupError</div>
+                    }
+
+                    @if (fullBackups.Count == 0)
+                    {
+                        <div class="empty-state compact-empty">
+                            <div class="empty-icon">▣</div>
+                            <div>
+                                <strong>No full backups yet</strong>
+                                <p class="muted">Create one before major updates, reinstall work, or risky server changes.</p>
+                            </div>
+                        </div>
+                    }
+                    else
+                    {
+                        <div class="table-wrap">
+                            <table class="data-table compact-table backup-table">
+                                <thead>
+                                    <tr>
+                                        <th>Name</th>
+                                        <th>Type</th>
+                                        <th>Status</th>
+                                        <th>Size</th>
+                                        <th>Created</th>
+                                        <th>Actions</th>
+                                    </tr>
+                                </thead>
+                                <tbody>
+                                    @foreach (var backup in fullBackups)
+                                    {
+                                        <tr>
+                                            <td>
+                                                <strong>@backup.Name</strong>
+                                                @if (!string.IsNullOrWhiteSpace(backup.LastError))
+                                                {
+                                                    <div class="consistency-details">@backup.LastError</div>
+                                                }
+                                            </td>
+                                            <td>@BackupTypeText(backup.BackupType)</td>
+                                            <td><span class="pill @BackupStatusClass(backup.Status)">@BackupStatusText(backup.Status)</span></td>
+                                            <td>@FormatBytes(backup.TotalBytes)</td>
+                                            <td>@backup.CreatedAt.ToLocalTime()</td>
+                                            <td class="button-row">
+                                                @if (backup.Status.Equals("complete", StringComparison.OrdinalIgnoreCase))
+                                                {
+                                                    <button class="button primary soft"
+                                                            @onclick="() => BeginFullRestore(backup)"
+                                                            disabled="@(busy || fullBackupInProgress || fullRestoreInProgress)">
+                                                        Restore
+                                                    </button>
+                                                }
+                                                <button class="button danger"
+                                                        @onclick="() => DeleteFullBackup(backup)"
+                                                        disabled="@(busy || fullBackupInProgress || fullRestoreInProgress || backup.Status.Equals("creating", StringComparison.OrdinalIgnoreCase))">
+                                                    Delete
+                                                </button>
+                                            </td>
+                                        </tr>
+                                    }
+                                </tbody>
+                            </table>
+                        </div>
+                    }
+
+                    @if (pendingFullRestoreBackup is not null)
+                    {
+                        <div class="backup-restore-confirm">
+                            <div>
+                                <strong>Restore full backup: @pendingFullRestoreBackup.Name</strong>
+                                <p>This overwrites the current VM disk contents with the selected backup. PenguinPanel automatically creates a <strong>pre-restore safety backup</strong> first. Hyper-V checkpoints must be merged/deleted before a full restore.</p>
+                            </div>
+                            <input @bind="fullRestoreConfirmation"
+                                   @bind:event="oninput"
+                                   autocomplete="off"
+                                   placeholder="Type RESTORE" />
+                            <div class="button-row">
+                                <button class="button danger"
+                                        @onclick="ExecuteFullRestore"
+                                        disabled="@(!CanExecuteFullRestore())">
+                                    Restore full backup
+                                </button>
+                                <button class="button"
+                                        @onclick="CancelFullRestore"
+                                        disabled="@fullRestoreInProgress">
+                                    Cancel
+                                </button>
+                            </div>
+                        </div>
+                    }
+
+
                 </section>
             }
             else if (activeTab == "reinstall")
@@ -779,6 +1657,130 @@ else
                         <h2>Reinstall</h2>
                         <span class="muted">@(Session.User!.IsAdmin ? "Admin reinstall" : "Self-service OS reinstall")</span>
                     </div>
+
+                    @if (reinstallRollback is not null)
+                    {
+                        <div class="reinstall-rollback-card">
+                            <div class="reinstall-rollback-head">
+                                <div>
+                                    <span class="reinstall-rollback-kicker">Protected previous installation</span>
+                                    <h3>Previous Windows installation</h3>
+                                    <p>
+                                        PenguinPanel kept the OS that was installed before your last reinstall.
+                                        You can restore it until the protection expires.
+                                    </p>
+                                    @if (Session.User!.IsAdmin)
+                                    {
+                                        <p class="muted">
+                                            Admin note: this protection is the previous standalone OS VHDX, not a Hyper-V checkpoint.
+                                            Seeing <strong>No checkpoints</strong> in Hyper-V Manager is expected and avoids AVHDX/checkpoint merge chains during OS rollback.
+                                        </p>
+                                    }
+                                </div>
+                                <span class="pill online">Protected</span>
+                            </div>
+
+                            <div class="reinstall-rollback-grid">
+                                <div>
+                                    <span>Created</span>
+                                    <strong>@reinstallRollback.CreatedAt.ToLocalTime().ToString("yyyy-MM-dd HH:mm")</strong>
+                                </div>
+                                <div>
+                                    <span>Expires</span>
+                                    <strong>@reinstallRollback.ExpiresAt.ToLocalTime().ToString("yyyy-MM-dd HH:mm")</strong>
+                                    <small>@RollbackExpiryText(reinstallRollback)</small>
+                                </div>
+                                <div>
+                                    <span>Stored size</span>
+                                    <strong>@FormatBytes(reinstallRollback.PhysicalDiskBytes)</strong>
+                                </div>
+                                <div>
+                                    <span>Virtual disk</span>
+                                    <strong>@FormatBytes(reinstallRollback.VirtualDiskBytes)</strong>
+                                </div>
+                            </div>
+
+                            @if (reinstallRollbackInProgress)
+                            {
+                                <div class="restore-progress-card rollback-progress-card" aria-live="polite">
+                                    <div class="restore-progress-head">
+                                        <strong>Restoring previous OS</strong>
+                                        <span>@reinstallRollbackProgress%</span>
+                                    </div>
+                                    <div class="restore-progress-track">
+                                        <div class="restore-progress-bar" style="@($"width:{reinstallRollbackProgress}%")"></div>
+                                    </div>
+                                    <p>@reinstallRollbackStatus</p>
+                                </div>
+                            }
+                            else if (string.Equals(reinstallRollbackPendingAction, "restore", StringComparison.Ordinal))
+                            {
+                                <div class="reinstall-rollback-confirm">
+                                    <strong>Restore the previous Windows installation?</strong>
+                                    <p>
+                                        The Windows installation currently running on this VPS will be removed after the previous OS boots successfully.
+                                        Back up anything created since the reinstall before continuing.
+                                    </p>
+                                    <div class="button-row">
+                                        <button class="button danger" @onclick="ConfirmRestorePreviousOs">
+                                            Yes, restore previous OS
+                                        </button>
+                                        <button class="button" @onclick="CancelReinstallRollbackAction">
+                                            Cancel
+                                        </button>
+                                    </div>
+                                </div>
+                            }
+                            else if (string.Equals(reinstallRollbackPendingAction, "delete", StringComparison.Ordinal))
+                            {
+                                <div class="reinstall-rollback-confirm">
+                                    <strong>Delete the protected previous OS?</strong>
+                                    <p>
+                                        This permanently removes the rollback disk and cannot be undone.
+                                    </p>
+                                    <div class="button-row">
+                                        <button class="button danger" @onclick="ConfirmDeleteReinstallRollback">
+                                            Yes, delete rollback
+                                        </button>
+                                        <button class="button" @onclick="CancelReinstallRollbackAction">
+                                            Cancel
+                                        </button>
+                                    </div>
+                                </div>
+                            }
+                            else
+                            {
+                                <div class="reinstall-rollback-actions">
+                                    @if (Session.User!.IsAdmin || Panel.AllowClientReinstallRollbackRestore)
+                                    {
+                                        <button class="button primary soft"
+                                                @onclick='() => BeginReinstallRollbackAction("restore")'>
+                                            Restore previous OS
+                                        </button>
+                                    }
+
+                                    @if (Session.User!.IsAdmin)
+                                    {
+                                        <span class="rollback-admin-label">Keep for:</span>
+                                        <button class="button mini" @onclick="() => SetRollbackRetention(1)">24h</button>
+                                        <button class="button mini" @onclick="() => SetRollbackRetention(3)">3 days</button>
+                                        <button class="button mini" @onclick="() => SetRollbackRetention(7)">7 days</button>
+                                        <button class="button mini danger"
+                                                @onclick='() => BeginReinstallRollbackAction("delete")'>
+                                            Delete rollback
+                                        </button>
+                                    }
+                                </div>
+                            }
+                        </div>
+
+                        <div class="notice-card compact-notice">
+                            <strong>Another reinstall is temporarily locked</strong>
+                            <p>
+                                To protect the previous installation, PenguinPanel will not start another reinstall until this rollback is restored, expires, or an administrator deletes it.
+                            </p>
+                        </div>
+                    }
 
                     @if (templates.Where(t => t.IsEnabled || Session.User!.IsAdmin).Any())
                     {
@@ -806,7 +1808,8 @@ else
                         <div class="form-grid">
                             <label>
                                 Operating system / template
-                                <select @bind="selectedTemplateId">
+                                <select @bind="selectedTemplateId"
+                                        disabled="@(busy || reinstallInProgress || reinstallConfirmPending)">
                                     <option value="0">Select template</option>
                                     @foreach (var template in templates.Where(t => t.IsEnabled || Session.User!.IsAdmin))
                                     {
@@ -814,6 +1817,30 @@ else
                                     }
                                 </select>
                             </label>
+
+                            <div class="reinstall-password-grid full-row">
+                                <label>
+                                    New Windows / RDP password
+                                    <input type="password"
+                                           @bind="reinstallWindowsPassword"
+                                           @bind:event="oninput"
+                                           autocomplete="new-password"
+                                           disabled="@(busy || reinstallInProgress || reinstallConfirmPending)"
+                                           placeholder="Optional — leave blank to generate one" />
+                                </label>
+                                <label>
+                                    Confirm password
+                                    <input type="password"
+                                           @bind="reinstallWindowsPasswordConfirm"
+                                           @bind:event="oninput"
+                                           autocomplete="new-password"
+                                           disabled="@(busy || reinstallInProgress || reinstallConfirmPending)"
+                                           placeholder="Leave blank too for automatic password" />
+                                </label>
+                            </div>
+                            <div class="reinstall-password-help full-row">
+                                <strong>Optional:</strong> choose your new Windows Administrator / Remote Desktop password here. Leave <strong>both fields blank</strong> and PenguinPanel will generate a fresh temporary password automatically and email it to the account assigned to this VPS. The hidden template bootstrap credential is never used as the customer's final password.
+                            </div>
                             @if (SelectedReinstallTemplate is { } selectedTemplate && !string.IsNullOrWhiteSpace(selectedTemplate.Notes))
                             {
                                 <div class="notice-card full-row template-client-note">
@@ -823,15 +1850,67 @@ else
                             }
                             @if (Session.User!.IsAdmin)
                             {
-                                <label class="full-row">Admin note<textarea @bind="reinstallNotes" placeholder="Optional internal note for the audit log"></textarea></label>
+                                <label class="full-row">Admin note<textarea @bind="reinstallNotes"
+                                                                            disabled="@(busy || reinstallInProgress || reinstallConfirmPending)"
+                                                                            placeholder="Optional internal note for the audit log"></textarea></label>
                             }
                             <div class="form-actions full-row">
-                                <button class="button primary" @onclick="RunDirectReinstallNow" disabled="@(busy || reinstallInProgress || selectedTemplateId == 0)">@(Session.User!.IsAdmin ? "Reinstall this server now" : "Reinstall server now")</button>
+                                <button class="button primary"
+                                        @onclick="RunDirectReinstallNow"
+                                        disabled="@(busy || reinstallInProgress || reinstallRollbackInProgress || reinstallConfirmPending || reinstallRollback is not null || selectedTemplateId == 0 || !ReinstallPasswordReady())">
+                                    @(Session.User!.IsAdmin ? "Reinstall this server now" : "Reinstall server now")
+                                </button>
                                 @if (Session.User!.IsAdmin)
                                 {
                                     <a class="button" href="templates">Manage OS Templates</a>
                                 }
                             </div>
+
+                            @if (reinstallConfirmPending)
+                            {
+                                <div class="reinstall-confirm-card full-row"
+                                     role="alert"
+                                     aria-live="polite">
+                                    <div class="reinstall-confirm-icon" aria-hidden="true">!</div>
+
+                                    <div class="reinstall-confirm-copy">
+                                        <strong>Are you sure you want to reinstall this server?</strong>
+
+                                        <p>
+                                            This will <strong>permanently erase all files and data</strong>
+                                            currently stored on this VPS and install
+                                            <strong>@pendingReinstallTemplateName</strong>.
+                                        </p>
+
+                                        <p class="reinstall-confirm-backup">
+                                            Make sure you have a backup of anything important before continuing.
+                                        </p>
+
+                                        <div class="reinstall-confirm-summary">
+                                            <span>Windows password</span>
+                                            <strong>
+                                                @(pendingReinstallPasswordWillBeGenerated
+                                                    ? "PenguinPanel will generate one and email it to you"
+                                                    : "Your chosen password will be used")
+                                            </strong>
+                                        </div>
+                                    </div>
+
+                                    <div class="reinstall-confirm-actions">
+                                        <button class="button danger"
+                                                @onclick="ConfirmPendingReinstall"
+                                                disabled="@(busy || reinstallInProgress)">
+                                            Yes, reinstall my server
+                                        </button>
+
+                                        <button class="button"
+                                                @onclick="CancelPendingReinstall"
+                                                disabled="@(busy || reinstallInProgress)">
+                                            Cancel
+                                        </button>
+                                    </div>
+                                </div>
+                            }
                         </div>
                     }
                     else
@@ -969,6 +2048,45 @@ else
     private VmNetworkPortProfile networkProfile = new("", "", "", "", "", true, 3389, 3389, false, 30120, 30120, "", "", "", "", "", DateTime.UtcNow);
     private VmPublicStatusSettings publicStatusSettings = new("", false, "", "", null, DateTime.UtcNow);
     private VmGuestAgentSettings guestAgentSettings = new("", false, false, null, "", "", DateTime.UtcNow);
+    private VmRecoveryAccountStatus recoveryAccountStatus = new("", false, "", null, null, "");
+    private VmHealthReport? healthReport;
+    private VmHealthRepairResult? healthRepairResult;
+    private HyperVConsoleFrame? hyperVConsoleFrame;
+    private string hyperVConsoleError = string.Empty;
+    private bool hyperVConsoleBusy;
+    private CancellationTokenSource? hyperVConsolePollCts;
+    private DotNetObjectReference<Server>? hyperVConsoleDotNetRef;
+    private ElementReference hyperVConsoleSurface;
+    private VmLiveMonitoringSnapshot? liveMonitoring;
+    private CancellationTokenSource? liveMonitoringPollCts;
+    private string liveMonitoringError = string.Empty;
+    private IReadOnlyList<VmPerformanceHistoryPoint> vmPerformanceHistory = [];
+    private bool performanceHistoryLoaded;
+    private bool performanceHistoryLoading;
+    private int performanceHistoryHours = 24;
+    private string performanceHistoryError = string.Empty;
+    private static readonly (int Hours, string Label)[] PerformanceHistoryRanges = [(1, "1h"), (6, "6h"), (24, "24h"), (168, "7d"), (720, "30d")];
+    private IReadOnlyList<DateTime> VmHistoryTimes => vmPerformanceHistory.Select(item => item.SampledAt).ToList();
+    private IReadOnlyList<PerformanceChartSeries> VmUtilizationSeries =>
+        [new("CPU", "#42d3ff", vmPerformanceHistory.Select(item => item.CpuPercent).ToList()), new("Memory", "#a78bfa", vmPerformanceHistory.Select(item => item.MemoryPressurePercent).ToList())];
+    private IReadOnlyList<PerformanceChartSeries> VmNetworkSeries =>
+        [new("Receive", "#4ade80", vmPerformanceHistory.Select(item => item.NetworkReceiveBytesPerSecond).ToList()), new("Send", "#f59e0b", vmPerformanceHistory.Select(item => item.NetworkSendBytesPerSecond).ToList())];
+    private IReadOnlyList<PerformanceChartSeries> VmDiskSeries =>
+        [new("Read", "#60a5fa", vmPerformanceHistory.Select(item => item.DiskReadBytesPerSecond).ToList()), new("Write", "#fb7185", vmPerformanceHistory.Select(item => item.DiskWriteBytesPerSecond).ToList())];
+    private VmAvailabilityState? availabilityState;
+    private VmAvailabilityPreference availabilityPreference = VmAvailabilityPreference.Default(0, string.Empty);
+    private IReadOnlyList<VmAvailabilityEvent> availabilityEvents = [];
+    private string availabilityPreferenceLoadedForVm = string.Empty;
+    private int availabilityMaintenanceHours = 4;
+    private string availabilityMaintenanceReason = string.Empty;
+    private string availabilityUiMessage = string.Empty;
+    private VmSelfHealingPreference selfHealingPreference = VmSelfHealingPreference.Default(string.Empty);
+    private VmSelfHealingState? selfHealingState;
+    private IReadOnlyList<VmSelfHealingEvent> selfHealingEvents = [];
+    private string selfHealingPreferenceLoadedForVm = string.Empty;
+    private int selfHealingHoldHours = 24;
+    private string selfHealingHoldReason = string.Empty;
+    private string selfHealingUiMessage = string.Empty;
     private IReadOnlyList<GuestAgentCommand> guestAgentCommands = [];
     private IReadOnlyList<PortMappingConflict> portConflicts = [];
     private bool portCheckCompleted;
@@ -981,13 +2099,32 @@ else
     private string firewallRemoteAddress = "Any";
     private string firewallAction = "Allow";
     private IReadOnlyList<AuditLogEntry> auditLogs = [];
-    private IReadOnlyList<VmCheckpointInfo> checkpoints = [];
+    private IReadOnlyList<VmQuickRestorePointInfo> quickRestorePoints = [];
+    private VmQuickSnapshotStorageStatus? quickSnapshotStorageStatus;
     private string checkpointError = string.Empty;
+    private IReadOnlyList<VmFullBackupInfo> fullBackups = [];
+    private VmBackupStorageStatus? backupStorageStatus;
+    private string fullBackupError = string.Empty;
+    private string fullBackupName = string.Empty;
+    private bool fullBackupInProgress;
+    private int fullBackupProgress;
+    private string fullBackupStatus = string.Empty;
+    private VmFullBackupInfo? pendingFullRestoreBackup;
+    private string fullRestoreConfirmation = string.Empty;
+    private bool fullRestoreInProgress;
+    private int fullRestoreProgress;
+    private string fullRestoreStatus = string.Empty;
     private IReadOnlyList<VmTemplate> templates = [];
     private IReadOnlyList<ReinstallRequest> reinstallRequests = [];
+    private VmReinstallRollbackInfo? reinstallRollback;
+    private bool reinstallRollbackInProgress;
+    private int reinstallRollbackProgress;
+    private string reinstallRollbackStatus = string.Empty;
+    private string reinstallRollbackPendingAction = string.Empty;
     private string activeTab = "console";
     private string tabDataVmName = "";
     private bool recoveryDataLoaded;
+    private bool healthDataLoaded;
     private bool backupsDataLoaded;
     private bool reinstallDataLoaded;
     private bool activityDataLoaded;
@@ -1034,8 +2171,6 @@ else
     private bool emergencySendPasswordEmail = true;
     private bool emergencyForceLogoffSessions = true;
     private bool emergencyRestartRemoteDesktopService = true;
-    private bool emergencyDisableOtherLocalAdministrators;
-    private bool emergencyDisableRemoteDesktopFirewall;
 
     private string profileNatName = "";
     private string profileInternalIp = "";
@@ -1059,8 +2194,16 @@ else
     private int? publicStatusPort;
 
     private string checkpointName = "";
+    private string checkpointDescription = "";
     private long selectedTemplateId;
     private string reinstallNotes = "";
+    private string reinstallWindowsPassword = "";
+    private string reinstallWindowsPasswordConfirm = "";
+    private bool reinstallConfirmPending;
+    private long pendingReinstallTemplateId;
+    private string pendingReinstallTemplateName = "";
+    private string pendingReinstallWindowsPassword = "";
+    private bool pendingReinstallPasswordWillBeGenerated;
     private string templateName = "";
     private string templateOs = "Windows";
     private string templateIsoPath = "";
@@ -1080,6 +2223,30 @@ else
         {
             await Load();
         }
+    }
+
+    protected override async Task OnAfterRenderAsync(bool firstRender)
+    {
+        if (!ShouldRunHyperVConsole())
+        {
+            return;
+        }
+
+        hyperVConsoleDotNetRef ??= DotNetObjectReference.Create(this);
+
+        try
+        {
+            await JS.InvokeVoidAsync(
+                "penguinHyperVConsole.bind",
+                hyperVConsoleSurface,
+                hyperVConsoleDotNetRef);
+        }
+        catch
+        {
+            // The screen can render one pass before the element reference is ready.
+        }
+
+        StartHyperVConsolePolling();
     }
 
     private async Task Load(bool showPageLoading = true)
@@ -1153,18 +2320,49 @@ else
 
         tabDataVmName = vmName;
         recoveryDataLoaded = false;
+        healthDataLoaded = false;
         backupsDataLoaded = false;
         reinstallDataLoaded = false;
         activityDataLoaded = false;
         settingsDataLoaded = false;
+        ClearPendingReinstallConfirmation();
+        reinstallWindowsPassword = string.Empty;
+        reinstallWindowsPasswordConfirm = string.Empty;
         rdpListenerStatus = null;
         guestAgentSettings = new(vmName, false, false, null, "", "", DateTime.UtcNow);
+        recoveryAccountStatus = new(vmName, false, "", null, null, "");
+        healthReport = null;
+        healthRepairResult = null;
+        StopLiveMonitoringPolling();
+        liveMonitoring = null;
+        liveMonitoringError = string.Empty;
+        availabilityState = null;
+        availabilityPreference = VmAvailabilityPreference.Default(Session.User?.Id ?? 0, vmName);
+        availabilityEvents = [];
+        availabilityPreferenceLoadedForVm = string.Empty;
+        availabilityMaintenanceReason = string.Empty;
+        availabilityUiMessage = string.Empty;
+        selfHealingPreference = VmSelfHealingPreference.Default(vmName);
+        selfHealingState = null;
+        selfHealingEvents = [];
+        selfHealingPreferenceLoadedForVm = string.Empty;
+        selfHealingHoldReason = string.Empty;
+        selfHealingUiMessage = string.Empty;
+        StopHyperVConsolePolling();
+        hyperVConsoleFrame = null;
+        hyperVConsoleError = string.Empty;
         guestAgentCommands = [];
         auditLogs = [];
-        checkpoints = [];
+        quickRestorePoints = [];
+        quickSnapshotStorageStatus = null;
         checkpointError = string.Empty;
         templates = [];
         reinstallRequests = [];
+        reinstallRollback = null;
+        reinstallRollbackInProgress = false;
+        reinstallRollbackProgress = 0;
+        reinstallRollbackStatus = string.Empty;
+        reinstallRollbackPendingAction = string.Empty;
         publicStatusSettings = new(vmName, false, "", "", null, DateTime.UtcNow);
     }
 
@@ -1176,6 +2374,14 @@ else
         }
 
         activeTab = tab;
+        if (!string.Equals(tab, "console", StringComparison.OrdinalIgnoreCase))
+        {
+            StopHyperVConsolePolling();
+        }
+        if (!string.Equals(tab, "monitoring", StringComparison.OrdinalIgnoreCase))
+        {
+            StopLiveMonitoringPolling();
+        }
         var needsRemoteLoad = TabNeedsLazyLoad(tab);
         if (needsRemoteLoad)
         {
@@ -1186,6 +2392,10 @@ else
         try
         {
             await LoadActiveTabDataAsync(force: false);
+            if (string.Equals(tab, "monitoring", StringComparison.OrdinalIgnoreCase))
+            {
+                StartLiveMonitoringPolling();
+            }
         }
         catch (Exception ex)
         {
@@ -1204,6 +2414,8 @@ else
     private bool TabNeedsLazyLoad(string tab) => tab switch
     {
         "recovery" => !recoveryDataLoaded,
+        "monitoring" => liveMonitoring is null,
+        "health" => Session.User?.IsAdmin == true && !healthDataLoaded,
         "backups" => !backupsDataLoaded,
         "reinstall" => !reinstallDataLoaded,
         "activity" => !activityDataLoaded,
@@ -1220,7 +2432,19 @@ else
 
         switch (activeTab)
         {
+            case "monitoring" when CanViewTab("monitoring") && (force || liveMonitoring is null):
+                await LoadLiveMonitoringAsync();
+                StartLiveMonitoringPolling();
+                break;
+
+            case "health" when Session.User?.IsAdmin == true && CanViewTab("health") && (force || !healthDataLoaded):
+                healthReport = await Panel.GetVmHealthReportAsync(Session.User, vm.Name);
+                healthRepairResult = null;
+                healthDataLoaded = true;
+                break;
+
             case "recovery" when CanViewTab("recovery") && (force || !recoveryDataLoaded):
+                recoveryAccountStatus = await Panel.GetVmRecoveryAccountStatusAsync(Session.User, vm.Name);
                 guestAgentSettings = await Panel.GetVmGuestAgentSettingsAsync(Session.User, vm.Name);
                 guestAgentCommands = CanManageGuestAgent()
                     ? await Panel.GetGuestAgentCommandsForVmAsync(Session.User, vm.Name)
@@ -1233,13 +2457,14 @@ else
                 break;
 
             case "backups" when CanViewTab("backups") && (force || !backupsDataLoaded):
-                await LoadCheckpoints();
+                await LoadBackups();
                 backupsDataLoaded = true;
                 break;
 
             case "reinstall" when CanViewTab("reinstall") && (force || !reinstallDataLoaded):
                 templates = await Panel.GetVmTemplatesAsync(Session.User);
                 reinstallRequests = await Panel.GetReinstallRequestsAsync(Session.User, vm.Name);
+                reinstallRollback = await Panel.GetReinstallRollbackAsync(Session.User, vm.Name);
                 reinstallDataLoaded = true;
                 break;
 
@@ -1254,6 +2479,269 @@ else
                 settingsDataLoaded = true;
                 break;
         }
+    }
+
+    private async Task LoadLiveMonitoringAsync()
+    {
+        if (vm is null || !CanViewTab("monitoring")) return;
+
+        liveMonitoringError = string.Empty;
+        try
+        {
+            liveMonitoring = await Panel.GetVmLiveMonitoringAsync(Session.User, vm.Name);
+            if (!performanceHistoryLoaded) await LoadPerformanceHistoryAsync();
+            await LoadAvailabilityAsync();
+        }
+        catch (Exception ex)
+        {
+            liveMonitoringError = ex.Message;
+        }
+    }
+
+    private async Task ChangePerformanceHistoryRange(int hours)
+    {
+        performanceHistoryHours = hours;
+        await LoadPerformanceHistoryAsync();
+    }
+
+    private async Task LoadPerformanceHistoryAsync()
+    {
+        if (vm is null) return;
+        performanceHistoryLoading = true; performanceHistoryError = string.Empty;
+        try
+        {
+            vmPerformanceHistory = await Panel.GetVmPerformanceHistoryAsync(Session.User, vm.Name, performanceHistoryHours);
+            performanceHistoryLoaded = true;
+        }
+        catch (Exception ex) { performanceHistoryError = ex.Message; performanceHistoryLoaded = true; }
+        finally { performanceHistoryLoading = false; }
+    }
+
+    private static string HistoryPercentAverage(IEnumerable<double> values) { var list = values.ToList(); return list.Count == 0 ? "—" : $"{list.Average():0.#}%"; }
+    private static string HistoryPercentPeak(IEnumerable<double> values) { var list = values.ToList(); return list.Count == 0 ? "—" : $"{list.Max():0.#}%"; }
+    private static string HistoryRatePeak(IEnumerable<double> values) { var list = values.ToList(); return list.Count == 0 ? "—" : FormatRate(list.Max()); }
+
+    private async Task LoadAvailabilityAsync()
+    {
+        if (vm is null) return;
+
+        availabilityState = await Panel.GetVmAvailabilityStateAsync(Session.User, vm.Name);
+        availabilityEvents = await Panel.GetVmAvailabilityEventsAsync(Session.User, vm.Name, 10);
+        if (Session.User?.IsAdmin != true
+            && !string.Equals(availabilityPreferenceLoadedForVm, vm.Name, StringComparison.OrdinalIgnoreCase))
+        {
+            availabilityPreference = await Panel.GetVmAvailabilityPreferenceAsync(Session.User, vm.Name);
+            availabilityPreferenceLoadedForVm = vm.Name;
+        }
+
+        selfHealingState = await Panel.GetVmSelfHealingStateAsync(Session.User, vm.Name);
+        selfHealingEvents = await Panel.GetVmSelfHealingEventsAsync(Session.User, vm.Name, 10);
+        if (Session.User?.IsAdmin != true
+            || !string.Equals(selfHealingPreferenceLoadedForVm, vm.Name, StringComparison.OrdinalIgnoreCase))
+        {
+            selfHealingPreference = await Panel.GetVmSelfHealingPreferenceAsync(Session.User, vm.Name);
+            selfHealingPreferenceLoadedForVm = vm.Name;
+        }
+    }
+
+    private async Task SaveAvailabilityPreference()
+    {
+        await RunPanelAction(async () =>
+        {
+            await Panel.SaveVmAvailabilityPreferenceAsync(Session.User, availabilityPreference);
+            availabilityPreferenceLoadedForVm = vm?.Name ?? string.Empty;
+            availabilityUiMessage = "Your availability notification choices were saved.";
+        });
+    }
+
+    private async Task SetAvailabilityMaintenance()
+    {
+        if (vm is null) return;
+        await RunPanelAction(async () =>
+        {
+            await Panel.SetVmAvailabilityMaintenanceAsync(Session.User, vm.Name, availabilityMaintenanceHours, availabilityMaintenanceReason);
+            availabilityUiMessage = $"Availability alerts are silenced for {availabilityMaintenanceHours} hour(s).";
+            await LoadAvailabilityAsync();
+        });
+    }
+
+    private async Task ClearAvailabilityMaintenance()
+    {
+        if (vm is null) return;
+        await RunPanelAction(async () =>
+        {
+            await Panel.ClearVmAvailabilityMaintenanceAsync(Session.User, vm.Name);
+            availabilityUiMessage = "The maintenance silence was ended.";
+            await LoadAvailabilityAsync();
+        });
+    }
+
+    private string AvailabilityPillClass()
+    {
+        if (availabilityState is null || availabilityState.IsPlannedNow) return "warning";
+        if (availabilityState.IsDown) return "offline";
+        if (!availabilityState.LastHeartbeatHealthy) return "warning";
+        return "online";
+    }
+
+    private string AvailabilityLabel()
+    {
+        if (availabilityState is null) return "Learning baseline";
+        if (availabilityState.IsPlannedNow) return "Maintenance silence";
+        if (availabilityState.IsDown) return "Offline";
+        if (!availabilityState.LastHeartbeatHealthy) return "Heartbeat warning";
+        return "Healthy";
+    }
+
+    private string MaintenanceText()
+    {
+        if (availabilityState?.IsPlannedNow != true) return "None";
+        var reason = string.IsNullOrWhiteSpace(availabilityState.PlannedReason)
+            ? "Planned maintenance"
+            : availabilityState.PlannedReason;
+        return $"Until {availabilityState.PlannedUntil!.Value.ToLocalTime():yyyy-MM-dd HH:mm} · {reason}";
+    }
+
+    private static string FormatAvailabilityDate(DateTime? value) =>
+        value is null ? "—" : value.Value.ToLocalTime().ToString("yyyy-MM-dd HH:mm:ss");
+
+    private static string AvailabilityEventClass(string severity) => severity switch
+    {
+        "critical" => "offline",
+        "recovered" => "online",
+        _ => "warning"
+    };
+
+    private async Task SaveSelfHealingPreference()
+    {
+        if (vm is null) return;
+        await RunPanelAction(async () =>
+        {
+            selfHealingPreference.VmName = vm.Name;
+            await Panel.SaveVmSelfHealingPreferenceAsync(Session.User, selfHealingPreference);
+            selfHealingPreferenceLoadedForVm = vm.Name;
+            selfHealingUiMessage = "This VPS's safe recovery settings were saved.";
+        });
+    }
+
+    private async Task SetSelfHealingHold()
+    {
+        if (vm is null) return;
+        await RunPanelAction(async () =>
+        {
+            await Panel.SetVmSelfHealingHoldAsync(Session.User, vm.Name, selfHealingHoldHours, selfHealingHoldReason);
+            selfHealingUiMessage = $"Automatic recovery is blocked for {selfHealingHoldHours} hour(s).";
+            selfHealingPreferenceLoadedForVm = string.Empty;
+            await LoadAvailabilityAsync();
+        });
+    }
+
+    private async Task ClearSelfHealingHold()
+    {
+        if (vm is null) return;
+        await RunPanelAction(async () =>
+        {
+            await Panel.ClearVmSelfHealingHoldAsync(Session.User, vm.Name);
+            selfHealingUiMessage = "The self-healing safety hold was cleared.";
+            selfHealingPreferenceLoadedForVm = string.Empty;
+            await LoadAvailabilityAsync();
+        });
+    }
+
+    private async Task ResetSelfHealingState()
+    {
+        if (vm is null) return;
+        await RunPanelAction(async () =>
+        {
+            await Panel.ResetVmSelfHealingStateAsync(Session.User, vm.Name);
+            selfHealingUiMessage = "The recovery attempt counter and incident state were reset.";
+            await LoadAvailabilityAsync();
+        });
+    }
+
+    private string SelfHealingPillClass()
+    {
+        if (selfHealingPreference.IsHeld || !selfHealingPreference.Enabled) return "warning";
+        return selfHealingState?.Status switch
+        {
+            "recovered" => "online",
+            "exhausted" => "offline",
+            "waiting_confirmation" or "cooldown" => "warning",
+            _ => "online"
+        };
+    }
+
+    private string SelfHealingLabel()
+    {
+        if (selfHealingPreference.IsHeld) return "Safety hold";
+        if (!selfHealingPreference.Enabled) return "VPS not opted in";
+        return selfHealingState?.Status switch
+        {
+            "waiting_confirmation" => "Confirming recovery",
+            "cooldown" => "Retry cooldown",
+            "exhausted" => "Manual review required",
+            "recovered" => "Recovered",
+            "cancelled" => "Suppressed",
+            _ => "Ready"
+        };
+    }
+
+    private string SelfHealingStatusText()
+    {
+        if (selfHealingPreference.IsHeld)
+        {
+            var reason = string.IsNullOrWhiteSpace(selfHealingPreference.HoldReason) ? "Safety hold" : selfHealingPreference.HoldReason;
+            return $"Held until {selfHealingPreference.HoldUntil!.Value.ToLocalTime():yyyy-MM-dd HH:mm} · {reason}";
+        }
+        return SelfHealingLabel();
+    }
+
+    private static string SelfHealingEventClass(string status) => status switch
+    {
+        "recovered" => "online",
+        "critical" => "offline",
+        _ => "warning"
+    };
+
+    private static string SelfHealingEventText(string eventType)
+    {
+        var value = (eventType ?? string.Empty).Replace('_', ' ').Trim();
+        return value.Length == 0 ? "Event" : char.ToUpperInvariant(value[0]) + value[1..];
+    }
+
+    private void StartLiveMonitoringPolling()
+    {
+        if (liveMonitoringPollCts is not null || activeTab != "monitoring" || vm is null) return;
+        liveMonitoringPollCts = new CancellationTokenSource();
+        _ = PollLiveMonitoringAsync(liveMonitoringPollCts.Token);
+    }
+
+    private async Task PollLiveMonitoringAsync(CancellationToken cancellationToken)
+    {
+        try
+        {
+            while (!cancellationToken.IsCancellationRequested)
+            {
+                var seconds = Math.Clamp(Configuration.GetValue("Monitoring:UiRefreshSeconds", 5), 3, 60);
+                await Task.Delay(TimeSpan.FromSeconds(seconds), cancellationToken);
+                await InvokeAsync(async () =>
+                {
+                    if (activeTab != "monitoring") return;
+                    await LoadLiveMonitoringAsync();
+                    StateHasChanged();
+                });
+            }
+        }
+        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested) { }
+    }
+
+    private void StopLiveMonitoringPolling()
+    {
+        var cts = liveMonitoringPollCts;
+        liveMonitoringPollCts = null;
+        if (cts is null) return;
+        cts.Cancel();
+        cts.Dispose();
     }
 
     private void CopyAccessToEditFields()
@@ -1299,17 +2787,39 @@ else
     }
 
 
+    private async Task LoadBackups()
+    {
+        if (vm is null || !CanViewTab("backups")) return;
+
+        fullBackupError = string.Empty;
+
+        try
+        {
+            fullBackups = await Panel.GetFullBackupsAsync(Session.User, vm.Name);
+            backupStorageStatus = await Panel.GetBackupStorageStatusAsync(Session.User);
+        }
+        catch (Exception ex)
+        {
+            fullBackups = [];
+            fullBackupError = ex.Message;
+        }
+
+        await LoadCheckpoints();
+    }
+
     private async Task LoadCheckpoints()
     {
         if (vm is null || !CanViewTab("backups")) return;
         try
         {
             checkpointError = string.Empty;
-            checkpoints = await Panel.GetCheckpointsAsync(Session.User, vm.Name);
+            quickRestorePoints = await Panel.GetQuickRestorePointsAsync(Session.User, vm.Name);
+            quickSnapshotStorageStatus = await Panel.GetQuickSnapshotStorageStatusAsync(Session.User, vm.Name);
         }
         catch (Exception ex)
         {
-            checkpoints = [];
+            quickRestorePoints = [];
+            quickSnapshotStorageStatus = null;
             checkpointError = ex.Message;
         }
     }
@@ -1611,6 +3121,347 @@ else
         });
     }
 
+    private bool ShouldRunHyperVConsole()
+    {
+        return UseHyperVBasicConsole()
+            && activeTab == "console"
+            && vm is not null
+            && IsConsoleAvailableState(vm.State)
+            && Session.User?.EffectivePermissions.CanViewConsole == true;
+    }
+
+    private void StartHyperVConsolePolling()
+    {
+        if (!ShouldRunHyperVConsole() || hyperVConsolePollCts is not null)
+        {
+            return;
+        }
+
+        var cts = new CancellationTokenSource();
+        hyperVConsolePollCts = cts;
+        _ = PollHyperVConsoleAsync(cts);
+    }
+
+    private void StopHyperVConsolePolling()
+    {
+        var cts = hyperVConsolePollCts;
+        hyperVConsolePollCts = null;
+        if (cts is null)
+        {
+            return;
+        }
+
+        try
+        {
+            cts.Cancel();
+        }
+        catch
+        {
+        }
+
+        cts.Dispose();
+    }
+
+    private async Task PollHyperVConsoleAsync(CancellationTokenSource owner)
+    {
+        var refreshMs = Math.Clamp(
+            Configuration.GetValue("Console:HyperV:RefreshMs", 350),
+            200,
+            5000);
+
+        try
+        {
+            while (!owner.IsCancellationRequested && ShouldRunHyperVConsole())
+            {
+                var cycleStarted = System.Diagnostics.Stopwatch.GetTimestamp();
+                await CaptureHyperVConsoleFrameAsync(showErrors: hyperVConsoleFrame is null);
+
+                var elapsed = System.Diagnostics.Stopwatch.GetElapsedTime(cycleStarted);
+                var remainingMs = Math.Max(10, refreshMs - (int)Math.Ceiling(elapsed.TotalMilliseconds));
+
+                try
+                {
+                    await Task.Delay(remainingMs, owner.Token);
+                }
+                catch (OperationCanceledException)
+                {
+                    break;
+                }
+            }
+        }
+        finally
+        {
+            if (ReferenceEquals(hyperVConsolePollCts, owner))
+            {
+                hyperVConsolePollCts = null;
+                owner.Dispose();
+            }
+        }
+    }
+
+    private async Task CaptureHyperVConsoleFrameAsync(bool showErrors)
+    {
+        if (vm is null || !ShouldRunHyperVConsole() || hyperVConsoleBusy)
+        {
+            return;
+        }
+
+        hyperVConsoleBusy = true;
+        try
+        {
+            var frame = await Panel.GetVmConsoleFrameAsync(Session.User, vm.Name);
+            hyperVConsoleFrame = frame;
+            hyperVConsoleError = string.Empty;
+        }
+        catch (Exception ex)
+        {
+            if (showErrors || hyperVConsoleFrame is null)
+            {
+                hyperVConsoleError = ex.Message;
+            }
+        }
+        finally
+        {
+            hyperVConsoleBusy = false;
+            try
+            {
+                await InvokeAsync(StateHasChanged);
+            }
+            catch
+            {
+            }
+        }
+    }
+
+    private async Task RefreshHyperVConsoleNow()
+    {
+        hyperVConsoleError = string.Empty;
+        await CaptureHyperVConsoleFrameAsync(showErrors: true);
+
+        if (hyperVConsoleFrame is not null)
+        {
+            try
+            {
+                await JS.InvokeVoidAsync("penguinHyperVConsole.focus", hyperVConsoleSurface);
+            }
+            catch
+            {
+            }
+        }
+    }
+
+    private async Task SendHyperVConsoleCtrlAltDelete()
+    {
+        if (vm is null) return;
+
+        try
+        {
+            await Panel.SendVmConsoleCtrlAltDeleteAsync(Session.User, vm.Name);
+            lastAction = "Ctrl+Alt+Delete sent through Hyper-V console.";
+            messageClass = "success";
+            message = lastAction;
+        }
+        catch (Exception ex)
+        {
+            messageClass = "alert";
+            message = ex.Message;
+        }
+    }
+
+    private async Task SendHyperVConsoleShortcut(string shortcut)
+    {
+        if (vm is null || !ShouldRunHyperVConsole()) return;
+
+        try
+        {
+            switch ((shortcut ?? string.Empty).Trim().ToLowerInvariant())
+            {
+                case "ctrl-esc":
+                    await Panel.SendVmConsoleKeyChordAsync(Session.User, vm.Name, 0x1B, true, false, false);
+                    break;
+                case "alt-tab":
+                    await Panel.SendVmConsoleKeyChordAsync(Session.User, vm.Name, 0x09, false, true, false);
+                    break;
+                case "alt-f4":
+                    await Panel.SendVmConsoleKeyChordAsync(Session.User, vm.Name, 0x73, false, true, false);
+                    break;
+                case "win":
+                    await Panel.TypeVmConsoleKeyAsync(Session.User, vm.Name, 0x5B);
+                    break;
+                default:
+                    return;
+            }
+
+            hyperVConsoleError = string.Empty;
+            await JS.InvokeVoidAsync("penguinHyperVConsole.focus", hyperVConsoleSurface);
+        }
+        catch (Exception ex)
+        {
+            hyperVConsoleError = ex.Message;
+        }
+    }
+
+    [JSInvokable]
+    public async Task HyperVConsoleTypeChord(int keyCode, bool control, bool alt, bool shift)
+    {
+        if (vm is null || !ShouldRunHyperVConsole())
+        {
+            return;
+        }
+
+        try
+        {
+            await Panel.SendVmConsoleKeyChordAsync(
+                Session.User,
+                vm.Name,
+                (uint)Math.Clamp(keyCode, 0, 255),
+                control,
+                alt,
+                shift);
+        }
+        catch (Exception ex)
+        {
+            hyperVConsoleError = ex.Message;
+            await InvokeAsync(StateHasChanged);
+        }
+    }
+
+    [JSInvokable]
+    public async Task HyperVConsoleTypeText(string text)
+    {
+        if (vm is null || !ShouldRunHyperVConsole() || string.IsNullOrEmpty(text))
+        {
+            return;
+        }
+
+        try
+        {
+            await Panel.TypeVmConsoleTextAsync(Session.User, vm.Name, text);
+        }
+        catch (Exception ex)
+        {
+            hyperVConsoleError = ex.Message;
+            await InvokeAsync(StateHasChanged);
+        }
+    }
+
+    [JSInvokable]
+    public async Task HyperVConsoleTypeKey(int keyCode)
+    {
+        if (vm is null || !ShouldRunHyperVConsole())
+        {
+            return;
+        }
+
+        try
+        {
+            await Panel.TypeVmConsoleKeyAsync(
+                Session.User,
+                vm.Name,
+                (uint)Math.Clamp(keyCode, 0, 255));
+        }
+        catch (Exception ex)
+        {
+            hyperVConsoleError = ex.Message;
+            await InvokeAsync(StateHasChanged);
+        }
+    }
+
+    [JSInvokable]
+    public async Task HyperVConsoleClick(double normalizedX, double normalizedY, int buttonIndex)
+    {
+        if (vm is null || !ShouldRunHyperVConsole())
+        {
+            return;
+        }
+
+        try
+        {
+            await Panel.ClickVmConsoleAsync(
+                Session.User,
+                vm.Name,
+                normalizedX,
+                normalizedY,
+                (uint)Math.Clamp(buttonIndex, 1, 5));
+        }
+        catch (Exception ex)
+        {
+            hyperVConsoleError = ex.Message;
+            await InvokeAsync(StateHasChanged);
+        }
+    }
+
+    private string HyperVConsoleStatusText()
+    {
+        if (vm is null) return "No VM selected";
+        if (!IsConsoleAvailableState(vm.State)) return $"VM {PrettyState(vm.State)}";
+        if (hyperVConsoleFrame is null) return "Waiting for framebuffer";
+        return "Hyper-V display live";
+    }
+
+    private string HyperVConsoleResolutionText()
+    {
+        if (hyperVConsoleFrame is null)
+        {
+            return "Resolution: waiting";
+        }
+
+        return $"VM: {hyperVConsoleFrame.VirtualWidth}×{hyperVConsoleFrame.VirtualHeight} | Stream: {hyperVConsoleFrame.Width}×{hyperVConsoleFrame.Height}";
+    }
+
+    private string HyperVConsoleLastFrameText()
+    {
+        if (hyperVConsoleFrame is null)
+        {
+            return "No frame yet";
+        }
+
+        return $"Frame: {hyperVConsoleFrame.CapturedAt.ToLocalTime():HH:mm:ss}";
+    }
+
+    private string HyperVConsoleViewportStyle()
+    {
+        if (hyperVConsoleFrame is null)
+        {
+            return "aspect-ratio: 4 / 3;";
+        }
+
+        var width = hyperVConsoleFrame.VirtualWidth > 0 ? hyperVConsoleFrame.VirtualWidth : hyperVConsoleFrame.Width;
+        var height = hyperVConsoleFrame.VirtualHeight > 0 ? hyperVConsoleFrame.VirtualHeight : hyperVConsoleFrame.Height;
+        if (width <= 0 || height <= 0)
+        {
+            return "aspect-ratio: 4 / 3;";
+        }
+
+        return $"aspect-ratio: {width} / {height};";
+    }
+
+    private async Task RunHealthDiagnosis()
+    {
+        if (vm is null || Session.User?.IsAdmin != true) return;
+
+        await RunPanelAction(async () =>
+        {
+            healthReport = await Panel.GetVmHealthReportAsync(Session.User, vm.Name);
+            healthRepairResult = null;
+            healthDataLoaded = true;
+            message = $"Health diagnosis completed: {HealthStatusText(healthReport.OverallStatus)}.";
+        });
+    }
+
+    private async Task RepairHealthProblems()
+    {
+        if (vm is null || Session.User?.IsAdmin != true) return;
+
+        await RunPanelAction(async () =>
+        {
+            healthRepairResult = await Panel.RepairVmHealthAsync(Session.User, vm.Name);
+            healthReport = healthRepairResult.Report;
+            healthDataLoaded = true;
+            message = healthRepairResult.Message;
+        });
+    }
+
     private async Task SaveAccess()
     {
         if (vm is null) return;
@@ -1644,12 +3495,14 @@ else
             {
                 rdpListenerStatus = await Panel.GetVmRdpListenerStatusAsync(Session.User, vm.Name);
                 var expected = networkProfile.RdpInternalPort <= 0 ? 3389 : networkProfile.RdpInternalPort;
-                messageClass = rdpListenerStatus.IsReady && rdpListenerStatus.Port == expected ? "alert success" : "alert";
+                messageClass = rdpListenerStatus.IsReady && rdpListenerStatus.IsUdpReady && rdpListenerStatus.Port == expected ? "alert success" : "alert";
                 message = rdpListenerStatus.IsReady
                     ? rdpListenerStatus.Port == expected
-                        ? $"Windows RDP is listening correctly on TCP {rdpListenerStatus.Port}."
-                        : $"Windows RDP is listening on TCP {rdpListenerStatus.Port}, but PenguinPanel WinNAT expects internal TCP {expected}. Use Match Windows RDP to public port, or update the Network profile."
-                    : $"Windows RDP check completed on TCP {rdpListenerStatus.Port}, but one or more required RDP components are not ready.";
+                        ? rdpListenerStatus.IsUdpReady
+                            ? $"Windows RDP is listening correctly on TCP + UDP {rdpListenerStatus.Port}."
+                            : $"Windows RDP TCP {rdpListenerStatus.Port} is ready, but UDP is not listening. TCP fallback still works; use Health → Repair to restore the UDP path."
+                        : $"Windows RDP is listening on port {rdpListenerStatus.Port}, but PenguinPanel WinNAT expects internal port {expected}. Use Match Windows RDP to public port, or update the Network profile."
+                    : $"Windows RDP check completed on port {rdpListenerStatus.Port}, but one or more required TCP components are not ready.";
                 lastAction = message;
             });
         }
@@ -1672,10 +3525,12 @@ else
                 CopyNetworkProfileToEditFields();
                 access = await Panel.GetVmAccessInfoAsync(Session.User, vm.Name);
                 CopyAccessToEditFields();
-                messageClass = rdpListenerStatus.IsReady ? "alert success" : "alert";
+                messageClass = rdpListenerStatus.IsReady && rdpListenerStatus.IsUdpReady ? "alert success" : "alert";
                 message = rdpListenerStatus.IsReady
-                    ? $"Windows RDP, guest firewall, and WinNAT are now aligned on TCP {rdpListenerStatus.Port}. Public endpoint: {RdpText()}."
-                    : $"The RDP port was updated to TCP {rdpListenerStatus.Port}, but the listener did not report ready yet. Reboot the VPS once and verify again.";
+                    ? rdpListenerStatus.IsUdpReady
+                        ? $"Windows RDP, guest firewall, and WinNAT are now aligned on TCP + UDP {rdpListenerStatus.Port}. Public endpoint: {RdpText()}."
+                        : $"RDP TCP {rdpListenerStatus.Port} is aligned and usable, but Windows did not report a UDP listener. TCP fallback remains available; run Health → Repair and verify again."
+                    : $"The RDP port was updated to {rdpListenerStatus.Port}, but the TCP listener did not report ready yet. Reboot the VPS once and verify again.";
                 lastAction = message;
             });
         }
@@ -1691,7 +3546,7 @@ else
             ? networkProfile.InternalIpAddress
             : profileInternalIp;
         var internalPort = networkProfile.RdpInternalPort > 0 ? networkProfile.RdpInternalPort : 3389;
-        return string.IsNullOrWhiteSpace(internalIp) ? $"Internal TCP {internalPort}" : $"{internalIp}:{internalPort}";
+        return string.IsNullOrWhiteSpace(internalIp) ? $"Internal TCP + UDP {internalPort}" : $"{internalIp}:{internalPort} (TCP + UDP)";
     }
 
     private string RdpListenerText()
@@ -1701,8 +3556,10 @@ else
             return "Not verified yet";
         }
 
-        var status = rdpListenerStatus.IsReady ? "ready" : "not ready";
-        return $"TCP {rdpListenerStatus.Port} ({status}, checked {rdpListenerStatus.CheckedAt.ToLocalTime():HH:mm:ss})";
+        var status = rdpListenerStatus.IsReady
+            ? rdpListenerStatus.IsUdpReady ? "TCP + UDP ready" : "TCP ready, UDP unavailable"
+            : "TCP not ready";
+        return $"Port {rdpListenerStatus.Port} ({status}, checked {rdpListenerStatus.CheckedAt.ToLocalTime():HH:mm:ss})";
     }
 
     private async Task ChangeRemoteDesktopPassword()
@@ -1748,6 +3605,18 @@ else
     private void ToggleEmergencyPasswordVisibility()
     {
         showEmergencyPassword = !showEmergencyPassword;
+    }
+
+    private async Task InitializeAgentlessRecovery()
+    {
+        if (vm is null) return;
+
+        await RunPanelAction(async () =>
+        {
+            recoveryAccountStatus = await Panel.InitializeVmAgentlessRecoveryAsync(Session.User, vm.Name);
+            message = "Agentless recovery is ready. The private recovery password is encrypted in PenguinPanel and was verified through PowerShell Direct.";
+            recoveryDataLoaded = true;
+        });
     }
 
     private async Task GenerateGuestAgentToken()
@@ -1810,8 +3679,8 @@ else
                 emergencySendPasswordEmail,
                 CanManageGuestAgent() ? emergencyForceLogoffSessions : true,
                 CanManageGuestAgent() ? emergencyRestartRemoteDesktopService : true,
-                CanManageGuestAgent() && emergencyDisableOtherLocalAdministrators,
-                CanManageGuestAgent() && emergencyDisableRemoteDesktopFirewall);
+                false,
+                false);
 
             message = result.Message;
             emergencyVerificationCode = "";
@@ -1825,6 +3694,7 @@ else
             {
                 showEmergencyPassword = true;
             }
+            recoveryAccountStatus = await Panel.GetVmRecoveryAccountStatusAsync(Session.User, vm.Name);
             guestAgentSettings = await Panel.GetVmGuestAgentSettingsAsync(Session.User, vm.Name);
             guestAgentCommands = CanManageGuestAgent()
                 ? await Panel.GetGuestAgentCommandsForVmAsync(Session.User, vm.Name)
@@ -1833,56 +3703,234 @@ else
         });
     }
 
-    private async Task CreateCheckpoint()
+    private async Task CreateFullBackup()
     {
-        if (vm is null) return;
+        if (vm is null || fullBackupInProgress || fullRestoreInProgress) return;
+
+        busy = true;
+        fullBackupInProgress = true;
+        fullBackupProgress = 2;
+        fullBackupStatus = "Preparing full backup...";
+        message = null;
+        messageClass = "alert success";
+        await InvokeAsync(StateHasChanged);
+
+        try
+        {
+            var result = await Panel.CreateFullBackupAsync(
+                Session.User,
+                vm.Name,
+                fullBackupName,
+                async (value, text) =>
+                {
+                    fullBackupProgress = value;
+                    fullBackupStatus = text;
+                    await InvokeAsync(StateHasChanged);
+                });
+
+            fullBackupProgress = 100;
+            fullBackupStatus = result.Message;
+            message = result.Message;
+            lastAction = result.Message;
+            fullBackupName = string.Empty;
+            await LoadBackups();
+            await Load(false);
+        }
+        catch (Exception ex)
+        {
+            messageClass = "alert";
+            message = ex.Message;
+            lastAction = ex.Message;
+            fullBackupStatus = "Backup failed: " + ex.Message;
+        }
+        finally
+        {
+            fullBackupInProgress = false;
+            busy = false;
+            await InvokeAsync(StateHasChanged);
+        }
+    }
+
+    private void BeginFullRestore(VmFullBackupInfo backup)
+    {
+        if (fullRestoreInProgress || fullBackupInProgress) return;
+        pendingFullRestoreBackup = backup;
+        fullRestoreConfirmation = string.Empty;
+        fullRestoreStatus = string.Empty;
+        fullRestoreProgress = 0;
+    }
+
+    private void CancelFullRestore()
+    {
+        if (fullRestoreInProgress) return;
+        pendingFullRestoreBackup = null;
+        fullRestoreConfirmation = string.Empty;
+    }
+
+    private bool CanExecuteFullRestore() =>
+        !busy
+        && !fullBackupInProgress
+        && !fullRestoreInProgress
+        && pendingFullRestoreBackup is not null
+        && string.Equals(fullRestoreConfirmation.Trim(), "RESTORE", StringComparison.Ordinal);
+
+    private async Task ExecuteFullRestore()
+    {
+        if (vm is null || pendingFullRestoreBackup is null || !CanExecuteFullRestore()) return;
+
+        var target = pendingFullRestoreBackup;
+        busy = true;
+        fullRestoreInProgress = true;
+        fullRestoreProgress = 2;
+        fullRestoreStatus = "Preparing full restore...";
+        message = null;
+        messageClass = "alert success";
+        await InvokeAsync(StateHasChanged);
+
+        try
+        {
+            var result = await Panel.RestoreFullBackupAsync(
+                Session.User,
+                vm.Name,
+                target.Id,
+                fullRestoreConfirmation,
+                async (value, text) =>
+                {
+                    fullRestoreProgress = value;
+                    fullRestoreStatus = text;
+                    await InvokeAsync(StateHasChanged);
+                });
+
+            fullRestoreProgress = 100;
+            fullRestoreStatus = result.Message;
+            message = result.Message;
+            lastAction = result.Message;
+            pendingFullRestoreBackup = null;
+            fullRestoreConfirmation = string.Empty;
+            await LoadBackups();
+            await Load(false);
+        }
+        catch (Exception ex)
+        {
+            messageClass = "alert";
+            message = ex.Message;
+            lastAction = ex.Message;
+            fullRestoreStatus = "Restore failed: " + ex.Message;
+        }
+        finally
+        {
+            fullRestoreInProgress = false;
+            busy = false;
+            await InvokeAsync(StateHasChanged);
+        }
+    }
+
+    private async Task DeleteFullBackup(VmFullBackupInfo backup)
+    {
+        if (vm is null || fullBackupInProgress || fullRestoreInProgress) return;
+
+        var confirmed = await JS.InvokeAsync<bool>(
+            "confirm",
+            $"Delete full backup '{backup.Name}'?\n\nThis removes only the backup copy. The active VPS disk is not touched.");
+
+        if (!confirmed) return;
+
         await RunPanelAction(async () =>
         {
-            await Panel.CreateCheckpointAsync(Session.User, vm.Name, checkpointName);
-            message = "Checkpoint created. Restore point list refreshed.";
-            checkpointName = "";
-            await Task.Delay(800);
+            await Panel.DeleteFullBackupAsync(Session.User, vm.Name, backup.Id);
+            message = $"Full backup '{backup.Name}' deleted.";
+            lastAction = message;
+            await LoadBackups();
+        });
+    }
+
+    private static string BackupStorageModeText(string mode) => mode.ToLowerInvariant() switch
+    {
+        "mostfreespace" => "Most free space",
+        "mostfreepercent" => "Highest free %",
+        "defaultfirst" => "Default first",
+        _ => mode
+    };
+
+    private static string BackupTypeText(string type) => type.ToLowerInvariant() switch
+    {
+        "manual" => "Manual",
+        "pre-restore" => "Safety",
+        "automatic" => "Automatic",
+        _ => type
+    };
+
+    private static string BackupStatusText(string status) => status.ToLowerInvariant() switch
+    {
+        "complete" => "Complete",
+        "creating" => "Creating",
+        "failed" => "Failed",
+        _ => status
+    };
+
+    private static string BackupStatusClass(string status) => status.ToLowerInvariant() switch
+    {
+        "complete" => "online",
+        "creating" => "warning",
+        "failed" => "offline",
+        _ => string.Empty
+    };
+
+    private async Task CreateCheckpoint()
+    {
+        if (vm is null || restoreInProgress) return;
+
+        await RunPanelAction(async () =>
+        {
+            var created = await Panel.CreateQuickRestorePointAsync(
+                Session.User,
+                vm.Name,
+                checkpointName,
+                checkpointDescription);
+
+            message = $"Quick Restore Point '{created.Name}' created.";
+            lastAction = message;
+            checkpointName = string.Empty;
+            checkpointDescription = string.Empty;
             await LoadCheckpoints();
         });
     }
 
-    private async Task RestoreCheckpoint(string name)
+    private async Task RestoreCheckpoint(VmQuickRestorePointInfo point)
     {
         if (vm is null || restoreInProgress) return;
 
         var confirmed = await JS.InvokeAsync<bool>(
             "confirm",
-            $"Restore checkpoint '{name}'?\n\nThis will stop {vm.Name} if it is running, restore the selected checkpoint, and leave the VM stopped. You will need to press Start when you are ready.");
+            $"Restore '{point.Name}'?\n\nPenguinPanel will first create a lightweight temporary Safety Restore Point for the CURRENT VM state, then apply this restore point. If the VM is running now, PenguinPanel will start it again after the restore.");
 
-        if (!confirmed)
-        {
-            return;
-        }
+        if (!confirmed) return;
 
         busy = true;
         restoreInProgress = true;
         restoreProgress = 5;
-        restoreStatus = "Preparing safe restore...";
+        restoreStatus = "Preparing Quick Restore...";
         messageClass = "alert success";
         message = null;
         await InvokeAsync(StateHasChanged);
 
         try
         {
-            var wasRunningInUi = IsRunningState(vm.State);
-            restoreProgress = 20;
-            restoreStatus = wasRunningInUi
-                ? "Stopping the VM before restore. It will stay stopped afterwards."
-                : "VM is already stopped. Restoring checkpoint.";
+            restoreProgress = 15;
+            restoreStatus = "Creating lightweight safety restore point for the current VM state...";
             await InvokeAsync(StateHasChanged);
 
-            var result = await Panel.RestoreCheckpointAsync(Session.User, vm.Name, name);
+            var result = await Panel.RestoreQuickRestorePointAsync(
+                Session.User,
+                vm.Name,
+                point.Id);
 
-            restoreProgress = 80;
-            restoreStatus = "Restore completed. Refreshing VM state and restore points...";
+            restoreProgress = 85;
+            restoreStatus = "Restore applied. Refreshing VM state and restore points...";
             await InvokeAsync(StateHasChanged);
 
             await Load();
+            await LoadBackups();
 
             restoreProgress = 100;
             restoreStatus = result.Message;
@@ -1904,15 +3952,101 @@ else
         }
     }
 
-    private async Task DeleteCheckpoint(string name)
+    private async Task ToggleSnapshotPin(VmQuickRestorePointInfo point)
     {
-        if (vm is null) return;
+        if (vm is null || point.IsTemporarySafety) return;
+
+        if (!point.IsPinned)
+        {
+            var currentPermanent = quickRestorePoints.FirstOrDefault(item =>
+                item.IsPinned
+                && !item.IsTemporarySafety
+                && !string.Equals(item.Id, point.Id, StringComparison.OrdinalIgnoreCase));
+
+            var prompt = currentPermanent is null
+                ? $"Make '{point.Name}' the permanent restore point?\n\nIt will not expire and will be excluded from expired cleanup."
+                : $"Replace permanent restore point '{currentPermanent.Name}' with '{point.Name}'?\n\n'{currentPermanent.Name}' will become a normal restore point again and normal age retention will apply to it.";
+
+            var confirmed = await JS.InvokeAsync<bool>("confirm", prompt);
+            if (!confirmed) return;
+        }
+        else
+        {
+            var confirmed = await JS.InvokeAsync<bool>(
+                "confirm",
+                $"Remove permanent protection from '{point.Name}'?\n\nIt will become a normal restore point and normal age retention will apply.");
+
+            if (!confirmed) return;
+        }
+
         await RunPanelAction(async () =>
         {
-            await Panel.DeleteCheckpointAsync(Session.User, vm.Name, name);
-            message = $"Checkpoint {name} deleted.";
+            await Panel.SetQuickRestorePointPinnedAsync(
+                Session.User,
+                vm.Name,
+                point.Id,
+                !point.IsPinned);
+
+            message = point.IsPinned
+                ? $"Permanent protection removed from '{point.Name}'."
+                : $"'{point.Name}' is now the permanent restore point.";
+            lastAction = message;
             await LoadCheckpoints();
         });
+    }
+
+    private async Task DeleteCheckpoint(VmQuickRestorePointInfo point)
+    {
+        if (vm is null) return;
+
+        var confirmed = await JS.InvokeAsync<bool>(
+            "confirm",
+            $"Delete Quick Restore Point '{point.Name}'?\n\nHyper-V will merge/remove the checkpoint data. This can take some time on a large or heavily changed VM.");
+
+        if (!confirmed) return;
+
+        await RunPanelAction(async () =>
+        {
+            await Panel.DeleteQuickRestorePointAsync(Session.User, vm.Name, point.Id);
+            message = $"Quick Restore Point '{point.Name}' deleted.";
+            lastAction = message;
+            await LoadCheckpoints();
+        });
+    }
+
+    private async Task CleanupExpiredSnapshots()
+    {
+        var expiredCount = quickSnapshotStorageStatus?.ExpiredUnpinnedCount ?? 0;
+        if (vm is null || expiredCount <= 0) return;
+
+        var confirmed = await JS.InvokeAsync<bool>(
+            "confirm",
+            $"Clean {expiredCount} expired unpinned Quick Restore Point(s)?\n\nThe permanent restore point is never included. Hyper-V may take time to merge AVHDX files.");
+
+        if (!confirmed) return;
+
+        await RunPanelAction(async () =>
+        {
+            var removed = await Panel.CleanupExpiredQuickRestorePointsAsync(Session.User, vm.Name);
+            message = removed == 1
+                ? "1 expired Quick Restore Point cleaned."
+                : $"{removed} expired Quick Restore Points cleaned.";
+            lastAction = message;
+            await LoadCheckpoints();
+        });
+    }
+
+    private static string SnapshotTypeText(VmQuickRestorePointInfo point) =>
+        point.IsTemporarySafety ? "Temporary safety" : "Restore point";
+
+    private static string SnapshotExpiryText(VmQuickRestorePointInfo point)
+    {
+        if (point.ExpiresAt is null) return "Managed";
+
+        var remaining = point.ExpiresAt.Value - DateTime.UtcNow;
+        if (remaining <= TimeSpan.Zero) return "Expired";
+        if (remaining.TotalHours < 48) return $"{Math.Ceiling(remaining.TotalHours):0}h left";
+        return $"{Math.Ceiling(remaining.TotalDays):0}d left";
     }
 
     private async Task RequestReinstall()
@@ -1928,33 +4062,332 @@ else
         });
     }
 
-    private async Task RunDirectReinstallNow()
+    private void BeginReinstallRollbackAction(string action)
     {
-        if (vm is null || selectedTemplateId == 0 || reinstallInProgress) return;
-
-        var templateNameForConfirm = templates.FirstOrDefault(t => t.Id == selectedTemplateId)?.Name ?? "selected template";
-        var confirmationText = Session.User!.IsAdmin
-            ? $"Reinstall {vm.Name} from template '{templateNameForConfirm}'?\n\nPenguinPanel will stop the VM, replace its primary disk with a fresh copy of the selected VHDX template, preserve the old disk file, start it again, and re-apply the saved Network / port profile."
-            : $"Reinstall your server from '{templateNameForConfirm}' now?\n\nThis will erase the current OS/data on the server disk, temporarily take the server offline, install the selected template, then start the server again automatically.";
-
-        var confirmed = await JS.InvokeAsync<bool>("confirm", confirmationText);
-
-        if (!confirmed)
+        if (reinstallRollback is null || reinstallRollbackInProgress)
         {
             return;
         }
 
-        await RunReinstallWithProgress(selectedTemplateId, templateNameForConfirm);
+        reinstallRollbackPendingAction = action;
+        message = null;
     }
 
-    private async Task RunReinstallWithProgress(long templateId, string templateName)
+    private void CancelReinstallRollbackAction()
+    {
+        reinstallRollbackPendingAction = string.Empty;
+    }
+
+    private async Task ConfirmRestorePreviousOs()
+    {
+        if (vm is null
+            || reinstallRollback is null
+            || reinstallRollbackInProgress)
+        {
+            return;
+        }
+
+        var rollbackId = reinstallRollback.Id;
+        reinstallRollbackPendingAction = string.Empty;
+        reinstallRollbackInProgress = true;
+        reinstallRollbackProgress = 2;
+        reinstallRollbackStatus = "Preparing previous OS restore...";
+        busy = true;
+        message = null;
+        await InvokeAsync(StateHasChanged);
+
+        try
+        {
+            var result = await Panel.RestoreReinstallRollbackAsync(
+                Session.User,
+                vm.Name,
+                rollbackId,
+                async (percent, status) =>
+                {
+                    await InvokeAsync(() =>
+                    {
+                        reinstallRollbackProgress = percent;
+                        reinstallRollbackStatus = status;
+                        StateHasChanged();
+                    });
+                });
+
+            messageClass = result.Warnings.Count == 0
+                ? "alert success"
+                : "alert";
+            message = result.Message;
+            lastAction = result.Message;
+            reinstallRollbackProgress = 100;
+            reinstallRollbackStatus = "Previous OS restored.";
+            reinstallDataLoaded = false;
+            await Load(false);
+        }
+        catch (Exception ex)
+        {
+            messageClass = "alert";
+            message = ex.Message;
+            lastAction = ex.Message;
+            reinstallRollbackProgress = 100;
+            reinstallRollbackStatus = "Previous OS restore stopped: " + ex.Message;
+        }
+        finally
+        {
+            reinstallRollbackInProgress = false;
+            busy = false;
+            await InvokeAsync(StateHasChanged);
+        }
+    }
+
+    private async Task ConfirmDeleteReinstallRollback()
+    {
+        if (vm is null
+            || reinstallRollback is null
+            || reinstallRollbackInProgress
+            || !Session.User!.IsAdmin)
+        {
+            return;
+        }
+
+        var rollbackId = reinstallRollback.Id;
+        reinstallRollbackPendingAction = string.Empty;
+        busy = true;
+        try
+        {
+            await Panel.DeleteReinstallRollbackAsync(
+                Session.User,
+                vm.Name,
+                rollbackId);
+
+            messageClass = "alert success";
+            message = "Protected previous OS deleted. The storage space can now be reused.";
+            reinstallDataLoaded = false;
+            await Load(false);
+        }
+        catch (Exception ex)
+        {
+            messageClass = "alert";
+            message = ex.Message;
+        }
+        finally
+        {
+            busy = false;
+            await InvokeAsync(StateHasChanged);
+        }
+    }
+
+    private async Task SetRollbackRetention(int days)
+    {
+        if (vm is null
+            || reinstallRollback is null
+            || !Session.User!.IsAdmin
+            || busy)
+        {
+            return;
+        }
+
+        busy = true;
+        try
+        {
+            reinstallRollback =
+                await Panel.SetReinstallRollbackRetentionAsync(
+                    Session.User,
+                    vm.Name,
+                    reinstallRollback.Id,
+                    days);
+
+            messageClass = "alert success";
+            message =
+                $"Previous OS is now protected until {reinstallRollback.ExpiresAt.ToLocalTime():yyyy-MM-dd HH:mm}.";
+        }
+        catch (Exception ex)
+        {
+            messageClass = "alert";
+            message = ex.Message;
+        }
+        finally
+        {
+            busy = false;
+            await InvokeAsync(StateHasChanged);
+        }
+    }
+
+    private static string RollbackExpiryText(
+        VmReinstallRollbackInfo rollback)
+    {
+        var remaining = rollback.ExpiresAt - DateTime.UtcNow;
+        if (remaining <= TimeSpan.Zero)
+        {
+            return "Expired";
+        }
+
+        if (remaining.TotalDays >= 1)
+        {
+            return remaining.TotalDays < 2
+                ? $"{remaining.TotalHours:0} hours remaining"
+                : $"{remaining.TotalDays:0.0} days remaining";
+        }
+
+        if (remaining.TotalHours >= 1)
+        {
+            return $"{remaining.TotalHours:0} hours remaining";
+        }
+
+        return $"{Math.Max(1, remaining.TotalMinutes):0} minutes remaining";
+    }
+
+    private bool ReinstallPasswordReady()
+    {
+        var password = reinstallWindowsPassword ?? string.Empty;
+        var confirmation = reinstallWindowsPasswordConfirm ?? string.Empty;
+
+        if (string.IsNullOrWhiteSpace(password)
+            && string.IsNullOrWhiteSpace(confirmation))
+        {
+            return true;
+        }
+
+        return password.Length >= 8
+            && string.Equals(
+                password,
+                confirmation,
+                StringComparison.Ordinal);
+    }
+
+    private async Task RunDirectReinstallNow()
+    {
+        if (vm is null
+            || selectedTemplateId == 0
+            || reinstallInProgress
+            || reinstallConfirmPending)
+        {
+            return;
+        }
+
+        var clientPasswordBlank =
+            string.IsNullOrWhiteSpace(reinstallWindowsPassword)
+            && string.IsNullOrWhiteSpace(reinstallWindowsPasswordConfirm);
+
+        if (!clientPasswordBlank
+            && (string.IsNullOrWhiteSpace(reinstallWindowsPassword)
+                || reinstallWindowsPassword.Length < 8))
+        {
+            messageClass = "alert";
+            message = "Use at least 8 characters for the Windows / RDP password, or leave both password fields blank and PenguinPanel will generate one automatically.";
+            return;
+        }
+
+        if (!clientPasswordBlank
+            && !string.Equals(
+                reinstallWindowsPassword,
+                reinstallWindowsPasswordConfirm,
+                StringComparison.Ordinal))
+        {
+            messageClass = "alert";
+            message = "The Windows / RDP passwords do not match. Leave both fields blank if you want PenguinPanel to generate a temporary password instead.";
+            return;
+        }
+
+        var templateNameForConfirm =
+            templates.FirstOrDefault(t => t.Id == selectedTemplateId)?.Name
+            ?? "the selected operating system";
+
+        VmReinstallPreflight preflight;
+        try
+        {
+            preflight = await Panel.GetReinstallPreflightAsync(
+                Session.User,
+                vm.Name,
+                selectedTemplateId);
+        }
+        catch (Exception ex)
+        {
+            messageClass = "alert";
+            message = "PenguinPanel could not prepare the reinstall: " + ex.Message;
+            return;
+        }
+
+        if (!preflight.CanProceed)
+        {
+            messageClass = "alert";
+            message =
+                "This server cannot be reinstalled safely yet. "
+                + preflight.Summary
+                + " "
+                + string.Join(" ", preflight.Warnings);
+            return;
+        }
+
+        // Freeze the exact values being reviewed. The customer only sees a simple
+        // destructive-action warning; the technical preflight stays internal.
+        pendingReinstallTemplateId = selectedTemplateId;
+        pendingReinstallTemplateName = templateNameForConfirm;
+        pendingReinstallWindowsPassword = reinstallWindowsPassword;
+        pendingReinstallPasswordWillBeGenerated = clientPasswordBlank;
+        reinstallConfirmPending = true;
+
+        // Do not leave a chosen password visible in the browser form while the
+        // confirmation card is open. It remains only in component memory.
+        reinstallWindowsPassword = string.Empty;
+        reinstallWindowsPasswordConfirm = string.Empty;
+
+        message = null;
+        await InvokeAsync(StateHasChanged);
+    }
+
+    private bool HasValidPendingReinstallConfirmation() =>
+        reinstallConfirmPending
+        && pendingReinstallTemplateId > 0
+        && !string.IsNullOrWhiteSpace(pendingReinstallTemplateName);
+
+    private async Task ConfirmPendingReinstall()
+    {
+        if (vm is null
+            || !HasValidPendingReinstallConfirmation()
+            || reinstallInProgress)
+        {
+            return;
+        }
+
+        var templateId = pendingReinstallTemplateId;
+        var templateNameForReinstall = pendingReinstallTemplateName;
+        var requestedWindowsPassword = pendingReinstallWindowsPassword;
+
+        ClearPendingReinstallConfirmation();
+        await InvokeAsync(StateHasChanged);
+
+        await RunReinstallWithProgress(
+            templateId,
+            templateNameForReinstall,
+            requestedWindowsPassword);
+    }
+
+    private void CancelPendingReinstall()
+    {
+        ClearPendingReinstallConfirmation();
+        message = "Reinstall cancelled. No changes were made to the server.";
+        messageClass = "alert success";
+    }
+
+    private void ClearPendingReinstallConfirmation()
+    {
+        reinstallConfirmPending = false;
+        pendingReinstallTemplateId = 0;
+        pendingReinstallTemplateName = string.Empty;
+        pendingReinstallWindowsPassword = string.Empty;
+        pendingReinstallPasswordWillBeGenerated = false;
+    }
+
+    private async Task RunReinstallWithProgress(
+        long templateId,
+        string templateName,
+        string requestedWindowsPassword)
     {
         if (vm is null) return;
 
         busy = true;
         reinstallInProgress = true;
         reinstallProgress = 5;
-        reinstallStatus = "Preparing reinstall...";
+        reinstallStatus = "Preparing Smart Reinstall...";
         reinstallCompletionNote = string.Empty;
         message = null;
         messageClass = "alert success";
@@ -1962,32 +4395,30 @@ else
 
         try
         {
-            await Task.Delay(150);
-            reinstallProgress = 20;
-            reinstallStatus = "Stopping the virtual server and preparing a fresh OS disk...";
-            await InvokeAsync(StateHasChanged);
-
-            await Task.Delay(250);
-            reinstallProgress = 45;
-            reinstallStatus = $"Applying template {templateName}...";
             reinstallCompletionNote = TemplateClientNote(templateId);
-            await InvokeAsync(StateHasChanged);
 
-            var result = await Panel.RunDirectReinstallAsync(Session.User, vm.Name, templateId, startAfter: true, notes: reinstallNotes);
+            async Task Progress(int percent, string status)
+            {
+                reinstallProgress = percent;
+                reinstallStatus = status;
+                await InvokeAsync(StateHasChanged);
+            }
 
-            reinstallProgress = 80;
-            reinstallStatus = "Re-applying network and remote desktop settings...";
-            await InvokeAsync(StateHasChanged);
+            var result = await Panel.RunDirectReinstallAsync(
+                Session.User,
+                vm.Name,
+                templateId,
+                startAfter: true,
+                notes: reinstallNotes,
+                requestedWindowsPassword: requestedWindowsPassword,
+                progress: Progress);
 
+            await Progress(99, "Refreshing the VPS state...");
             await Load(false);
 
             reinstallProgress = 100;
-            reinstallStatus = string.IsNullOrWhiteSpace(reinstallCompletionNote)
-                ? "Reinstall completed. Your server is starting again."
-                : $"Reinstall completed. Your server is starting again. {reinstallCompletionNote}";
-            message = string.IsNullOrWhiteSpace(reinstallCompletionNote)
-                ? result.Message
-                : $"{result.Message} {reinstallCompletionNote}";
+            reinstallStatus = "Reinstall completed. Your server is ready to use.";
+            message = result.Message;
             lastAction = message;
             selectedTemplateId = 0;
             reinstallNotes = "";
@@ -2000,7 +4431,7 @@ else
             message = ex.Message;
             lastAction = ex.Message;
             reinstallProgress = 100;
-            reinstallStatus = "Reinstall failed: " + ex.Message;
+            reinstallStatus = "Reinstall stopped: " + ex.Message;
             await InvokeAsync(StateHasChanged);
             await Task.Delay(1600);
         }
@@ -2064,7 +4495,16 @@ else
 
         try
         {
-            var result = await Panel.CreateTemplateFromVmAsync(Session.User, vm.Name, name, templateOs, templateStorageFolder, templateNotes, templateEnabled);
+            var result = await Panel.CreateTemplateFromVmAsync(
+                Session.User,
+                vm.Name,
+                name,
+                templateOs,
+                templateStorageFolder,
+                templateNotes,
+                templateEnabled,
+                bootstrapUsername: "Administrator",
+                bootstrapPassword: string.Empty);
             templateStatus = result.Message;
             message = $"Template created: {result.TemplatePath}";
             lastAction = message;
@@ -2214,11 +4654,16 @@ else
 
     private bool HasEffectiveWebConsoleUrl()
     {
-        return IsHttpUrl(EffectiveWebConsoleUrl());
+        return UseBrowserConsole() && IsHttpUrl(EffectiveWebConsoleUrl());
     }
 
     private string EffectiveWebConsoleUrl()
     {
+        if (!UseBrowserConsole())
+        {
+            return string.Empty;
+        }
+
         if (UseGuacamoleJsonAuth())
         {
             var jsonAuthUrl = BuildGuacamoleJsonAuthUrl();
@@ -2348,85 +4793,111 @@ else
 
     private string ConsoleModeText()
     {
+        if (UseHyperVBasicConsole())
+        {
+            return "Hyper-V Basic Console";
+        }
+
+        if (UseNativeRdpConsole())
+        {
+            return "Native Windows Remote Desktop";
+        }
+
         if (UseGuacamoleJsonAuth())
         {
-            return "Embedded Guacamole auto-login console";
-        }
-
-        if (HasWebConsoleUrl() && WebRdpPreferPerVmUrl())
-        {
-            return IsGuacamoleProvider() ? "Embedded Guacamole console" : "Embedded per-VM web console URL";
-        }
-
-        if (WebRdpEnabled() && WebRdpEmbedInConsole() && !string.IsNullOrWhiteSpace(WebRdpBaseUrl()))
-        {
-            return IsGuacamoleProvider() ? "Embedded Guacamole console" : "Embedded web RDP gateway";
-        }
-
-        if (HasWebConsoleUrl())
-        {
-            return IsGuacamoleProvider() ? "Embedded Guacamole console" : "Embedded per-VM web console URL";
-        }
-
-        return "Native .RDP launcher";
-    }
-
-    private string ConsoleHelpText()
-    {
-        if (UseGuacamoleJsonAuth())
-        {
-            return "The console is using Guacamole JSON auto-login. The client does not need a separate Guacamole account or manual Guacamole login. If the console says connection does not exist, open in new tab and verify the URL contains ?data= before #/client/.";
+            return "Legacy browser console - Guacamole auto-login";
         }
 
         if (HasEffectiveWebConsoleUrl())
         {
             return IsGuacamoleProvider()
-                ? "The console is using Guacamole. If it does not embed because of browser/cookie restrictions, press Open in new tab."
-                : "The console is using a web RDP gateway. If the iframe is blank, open it in a new tab and check gateway/reverse-proxy settings.";
+                ? "Legacy browser console - Guacamole"
+                : "Legacy browser RDP gateway";
         }
 
-        return "This uses normal RDP. A browser-embedded screen requires Guacamole or another web RDP gateway outside the VM.";
+        return "Native Windows Remote Desktop fallback";
     }
 
-    private string BrowserConsoleStatus()
+    private string ConsoleAccessStatus()
     {
-        if (UseGuacamoleJsonAuth()) return "Guacamole auto-login enabled";
-        if (HasWebConsoleUrl()) return IsGuacamoleProvider() ? "Guacamole configured" : "Per-VM URL configured";
-        if (WebRdpEnabled() && !string.IsNullOrWhiteSpace(WebRdpBaseUrl()))
+        if (UseHyperVBasicConsole())
         {
-            return IsGuacamoleProvider() ? "Using global Guacamole" : "Using global web RDP";
+            return "Hyper-V Basic Console - no guest network required";
         }
-        return "Not set";
+
+        if (UseNativeRdpConsole())
+        {
+            return "Native Windows RDP - no gateway required";
+        }
+
+        if (HasEffectiveWebConsoleUrl())
+        {
+            return IsGuacamoleProvider()
+                ? "Legacy Guacamole browser mode"
+                : "Legacy browser gateway mode";
+        }
+
+        return "Native Windows RDP fallback";
     }
 
     private string ConsolePreviewText()
     {
+        if (UseHyperVBasicConsole())
+        {
+            return "Hyper-V Basic Console is active. PenguinPanel reads the VM display and injects input through Hyper-V WMI; no browser gateway URL is required.";
+        }
+
+        if (UseNativeRdpConsole())
+        {
+            return "Native RDP mode is active. No browser-console URL is required.";
+        }
+
         if (UseGuacamoleJsonAuth())
         {
-            return "Guacamole JSON auto-login is enabled. PenguinPanel generates a temporary Guacamole session from this VM's saved RDP details, so the client does not need a separate Guacamole login. The per-VM Guacamole URL/connection ID box should stay empty.";
+            return "Legacy Guacamole JSON auto-login is enabled.";
         }
 
         var storedValue = StoredConsoleValue();
         if (!string.IsNullOrWhiteSpace(storedValue))
         {
-            return $"This VM has its own {ConsoleProvider()} console value. Preview: {EffectiveWebConsoleUrl()}";
+            return $"This VM has its own legacy {ConsoleProvider()} console value. Preview: {EffectiveWebConsoleUrl()}";
         }
 
         if (WebRdpEnabled() && !string.IsNullOrWhiteSpace(WebRdpBaseUrl()))
         {
             var preview = EffectiveWebConsoleUrl();
             return string.IsNullOrWhiteSpace(preview)
-                ? $"Global {ConsoleProvider()} is enabled. Add a per-VM Guacamole connection URL or connection ID for this VM, or enable Guacamole JSON auto-login."
-                : $"Global {ConsoleProvider()} is enabled. Console URL preview: {preview}";
+                ? $"Legacy {ConsoleProvider()} browser mode is enabled, but no usable console URL was generated."
+                : $"Legacy {ConsoleProvider()} console URL preview: {preview}";
         }
 
-        return "Guacamole is disabled. Add a per-VM Guacamole URL/connection ID or enable WebRdp in appsettings.json.";
+        return "No browser gateway is configured. Native Windows RDP will be used.";
     }
 
+    private string ConsoleModeSetting()
+    {
+        var configured = (Configuration["Console:Mode"] ?? string.Empty).Trim();
+        return string.IsNullOrWhiteSpace(configured) ? "HyperVBasic" : configured;
+    }
+
+    private bool UseHyperVBasicConsole() =>
+        ConsoleModeSetting().Equals("HyperVBasic", StringComparison.OrdinalIgnoreCase)
+        || ConsoleModeSetting().Equals("HyperV", StringComparison.OrdinalIgnoreCase)
+        || ConsoleModeSetting().Equals("VmConnect", StringComparison.OrdinalIgnoreCase);
+
+    private bool UseNativeRdpConsole() =>
+        ConsoleModeSetting().Equals("NativeRdp", StringComparison.OrdinalIgnoreCase)
+        || ConsoleModeSetting().Equals("Rdp", StringComparison.OrdinalIgnoreCase);
+
+    private bool UseBrowserConsole() =>
+        ConsoleModeSetting().Equals("Browser", StringComparison.OrdinalIgnoreCase)
+        || ConsoleModeSetting().Equals("WebRdp", StringComparison.OrdinalIgnoreCase)
+        || ConsoleModeSetting().Equals("Guacamole", StringComparison.OrdinalIgnoreCase);
 
     private bool UseGuacamoleJsonAuth()
     {
-        return IsGuacamoleProvider()
+        return UseBrowserConsole()
+            && IsGuacamoleProvider()
             && WebRdpEnabled()
             && WebRdpEmbedInConsole()
             && GuacamoleJsonAuth.IsEnabled
@@ -2490,12 +4961,24 @@ else
             "session bpp:i:32",
             $"full address:s:{RdpText()}",
             "prompt for credentials:i:1",
+            "promptcredentialonce:i:1",
             "authentication level:i:2",
             "enablecredsspsupport:i:1",
+            "negotiate security layer:i:1",
+            "gatewayusagemethod:i:0",
+            "networkautodetect:i:1",
+            "bandwidthautodetect:i:1",
+            "compression:i:1",
+            "autoreconnection enabled:i:1",
+            "keyboardhook:i:2",
+            "smart sizing:i:1",
+            "dynamic resolution:i:1",
             "redirectclipboard:i:1",
             "redirectprinters:i:0",
             "redirectcomports:i:0",
             "redirectsmartcards:i:1",
+            "redirectdrives:i:0",
+            "audiocapturemode:i:0",
             "audiomode:i:0"
         };
 
@@ -2540,6 +5023,23 @@ else
     private string EmergencyPasswordInputType => showEmergencyPassword ? "text" : "password";
 
     private bool EmergencyResetCodeRequired => bool.TryParse(Configuration["Security:EmergencyResetRequireEmailCode"], out var value) ? value : true;
+
+    private string AgentlessRecoveryStatusText()
+    {
+        return recoveryAccountStatus.IsReady
+            ? "Ready - no Guest Agent required"
+            : "Not initialized";
+    }
+
+    private bool CanUseConfiguredEmergencyRecovery()
+    {
+        return recoveryAccountStatus.IsReady
+            || (guestAgentSettings.IsEnabled && guestAgentSettings.HasToken);
+    }
+
+    private static string RecoveryDateText(DateTime? value) => value is null
+        ? "Never"
+        : value.Value.ToLocalTime().ToString();
 
     private string GuestAgentStatusText()
     {
@@ -2628,7 +5128,7 @@ else
 
     private IEnumerable<string> AllowedTabs()
     {
-        string[] tabs = ["console", "resources", "access", "recovery", "network", "firewall", "backups", "reinstall", "activity", "settings"];
+        string[] tabs = ["console", "resources", "monitoring", "health", "access", "recovery", "network", "firewall", "backups", "reinstall", "activity", "settings"];
         return tabs.Where(CanViewTab);
     }
 
@@ -2644,6 +5144,8 @@ else
     {
         "console" => "Console",
         "resources" => "Resources",
+        "monitoring" => "Monitoring",
+        "health" => "Health",
         "access" => "Access",
         "recovery" => "Password Reset",
         "network" => "Network",
@@ -2720,6 +5222,46 @@ else
             || state.Contains("Suspended", StringComparison.OrdinalIgnoreCase);
     }
 
+    private int HealthCount(string status)
+    {
+        return healthReport?.Checks.Count(item => string.Equals(item.Status, status, StringComparison.OrdinalIgnoreCase)) ?? 0;
+    }
+
+    private string HealthSummaryText()
+    {
+        if (healthReport is null) return "No health report loaded.";
+
+        var critical = HealthCount("critical");
+        var warnings = HealthCount("warning");
+        if (critical > 0) return $"{critical} critical problem(s) and {warnings} warning(s) need attention.";
+        if (warnings > 0) return $"No critical failures. {warnings} warning(s) should be reviewed.";
+        return "All checked PenguinPanel-managed components are healthy.";
+    }
+
+    private static string HealthStatusText(string status) => status.ToLowerInvariant() switch
+    {
+        "healthy" => "Healthy",
+        "warning" => "Warning",
+        "critical" => "Critical",
+        "skipped" => "Skipped",
+        _ => status
+    };
+
+    private static string HealthPillClass(string status) => status.ToLowerInvariant() switch
+    {
+        "healthy" => "online",
+        "critical" => "offline",
+        "warning" => "warning",
+        _ => string.Empty
+    };
+
+    private static string HealthNoticeClass(string status) => status.ToLowerInvariant() switch
+    {
+        "healthy" => "success-note",
+        "critical" => "danger-note",
+        _ => string.Empty
+    };
+
     private static string StateClass(string state)
     {
         if (state.Contains("Running", StringComparison.OrdinalIgnoreCase) || state == "2") return "online";
@@ -2738,14 +5280,9 @@ else
 
     private static int Clamp(int value) => Math.Max(0, Math.Min(100, value));
 
-    private static int MemoryBarPercent(long bytes)
-    {
-        if (bytes <= 0) return 0;
-        var gb = bytes / 1024d / 1024d / 1024d;
-        return Math.Max(8, Math.Min(100, (int)Math.Round(gb * 12.5)));
-    }
-
     private static string FormatUptime(TimeSpan value) => value == TimeSpan.Zero ? "-" : $"{(int)value.TotalDays}d {value.Hours}h {value.Minutes}m";
+
+    private static string FormatRate(double bytesPerSecond) => $"{FormatBytes((long)Math.Max(0, bytesPerSecond))}/s";
 
     private static string FormatBytes(long bytes)
     {
@@ -2770,6 +5307,10 @@ else
             {
                 await Load();
             }
+            else
+            {
+                StopLiveMonitoringPolling();
+            }
 
             StateHasChanged();
         });
@@ -2778,5 +5319,9 @@ else
     public void Dispose()
     {
         Session.Changed -= OnSessionChanged;
+        StopLiveMonitoringPolling();
+        StopHyperVConsolePolling();
+        hyperVConsoleDotNetRef?.Dispose();
+        hyperVConsoleDotNetRef = null;
     }
 }

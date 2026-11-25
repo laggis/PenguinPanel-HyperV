@@ -14,7 +14,6 @@ else
     <div class="page-head">
         <div>
             <h1>@(Session.User!.IsAdmin ? "Dashboard" : "Your servers")</h1>
-            <p>@(Session.User!.IsAdmin ? "Penguin-powered virtual server overview with quick controls." : "Your assigned virtual servers, access details, and quick controls.")</p>
         </div>
         <button class="button" @onclick="Load">Refresh</button>
     </div>
@@ -24,7 +23,7 @@ else
         <div class="@messageClass">@message</div>
     }
 
-    <div class="metric-grid">
+    <div class="metric-grid fleet-summary">
         <div class="metric">
             <span>@(Session.User!.IsAdmin ? "Virtual servers" : "Assigned servers")</span>
             <strong>@vms.Count</strong>
@@ -48,8 +47,7 @@ else
         <section class="panel">
             <div class="panel-head">
                 <div>
-                    <h2>Host node health</h2>
-                    <p class="muted">CPU, memory, disk, Hyper-V service, and VM count from the Windows host.</p>
+                    <h2>Host health</h2>
                 </div>
                 <span class="pill">@(hostStatus is null ? "Unavailable" : $"Updated {hostStatus.UpdatedAt.ToLocalTime():HH:mm:ss}")</span>
             </div>

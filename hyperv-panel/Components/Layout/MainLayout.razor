@@ -31,12 +31,10 @@ else
                     <span class="dot-live"></span>
                     <span>@TopStatusText</span>
                 </div>
-                <div class="top-icons">
-                    <button type="button" title="Search / virtual servers" @onclick='() => NavigateTop("vms")'>⌕</button>
-                    <button type="button" title="Dashboard" @onclick='() => NavigateTop("")'>▦</button>
-                    <button type="button" title="Settings" @onclick='() => NavigateTop(Session.User?.IsAdmin == true ? "settings" : "vms")'>⚙</button>
-                </div>
-                <span class="signed-in">@SignedInText</span>
+                <button type="button" class="appearance-toggle" data-appearance-toggle="true" title="Switch appearance: System, Light, Dark">
+                    Theme · <span class="mode-system">System</span><span class="mode-light">Light</span><span class="mode-dark">Dark</span>
+                </button>
+                <a href="account" class="signed-in" title="Open account settings">@SignedInText</a>
             </div>
 
             <article class="content">
@@ -126,11 +124,6 @@ else
         {
             Navigation.NavigateTo("/login", replace: true);
         }
-    }
-
-    private void NavigateTop(string path)
-    {
-        Navigation.NavigateTo("/" + path.TrimStart('/'));
     }
 
     private async Task CompleteRequiredPasswordChange()

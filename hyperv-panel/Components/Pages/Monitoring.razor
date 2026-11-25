@@ -1,0 +1,226 @@
+@page "/monitoring"
+@implements IDisposable
+@inject PanelService Panel
+@inject UserSession Session
+
+<PageTitle>Live VPS Monitoring</PageTitle>
+
+@if (!Session.IsLoggedIn)
+{
+    <NotSignedIn />
+}
+else if (Session.User?.IsAdmin != true)
+{
+    <section class="panel empty-state">
+        <h1>Admin access required</h1>
+        <p>The node-wide monitoring dashboard is available to panel administrators.</p>
+    </section>
+}
+else
+{
+    <div class="page-head">
+        <div>
+            <span class="eyebrow">Step 3.4.0</span>
+            <h1>Live VPS Monitoring</h1>
+            <p>One lightweight Hyper-V sample for the host and every VPS, refreshed every @((snapshot?.PollSeconds ?? 5)) seconds.</p>
+        </div>
+        <button class="button primary" @onclick="ForceRefresh" disabled="@refreshing">@(refreshing ? "Sampling..." : "Refresh now")</button>
+    </div>
+
+    @if (!string.IsNullOrWhiteSpace(error))
+    {
+        <div class="alert">@error</div>
+    }
+    else if (!string.IsNullOrWhiteSpace(snapshot?.LastError))
+    {
+        <div class="alert warning-note"><strong>Last sample failed.</strong> Showing the most recent good data. @snapshot.LastError</div>
+    }
+
+    @if (snapshot is null || !snapshot.HasSample)
+    {
+        <section class="panel monitoring-loading">
+            <div class="monitoring-pulse" aria-hidden="true"></div>
+            <div><h2>Collecting the first sample</h2><p>The first rate sample is a baseline. Network and disk speeds appear after the next poll.</p></div>
+        </section>
+    }
+    else
+    {
+        <div class="monitoring-status-row">
+            <span class="pill @(snapshot.IsStale ? "warning" : "online")">@(snapshot.IsStale ? "Sample stale" : "Live")</span>
+            <span>Last sample @snapshot.SampledAt.ToLocalTime().ToString("HH:mm:ss")</span>
+            <span>@snapshot.Vms.Count VPS detected</span>
+        </div>
+
+        @if (snapshot.Host is not null)
+        {
+            <section class="monitoring-host-grid">
+                <article class="monitoring-stat-card">
+                    <span>Host CPU</span><strong>@snapshot.Host.CpuPercent.ToString("0.#")%</strong>
+                    <div class="usage-track"><div class="usage-fill" style="width:@Percent(snapshot.Host.CpuPercent)%"></div></div>
+                </article>
+                <article class="monitoring-stat-card">
+                    <span>Host memory</span><strong>@FormatBytes(snapshot.Host.MemoryUsedBytes) / @FormatBytes(snapshot.Host.MemoryTotalBytes)</strong>
+                    <div class="usage-track"><div class="usage-fill" style="width:@Percent(Ratio(snapshot.Host.MemoryUsedBytes, snapshot.Host.MemoryTotalBytes))%"></div></div>
+                </article>
+                <article class="monitoring-stat-card"><span>System disk free</span><strong>@FormatBytes(snapshot.Host.DiskFreeBytes)</strong><small>of @FormatBytes(snapshot.Host.DiskTotalBytes)</small></article>
+                <article class="monitoring-stat-card"><span>Hyper-V service</span><strong>@snapshot.Host.HyperVServiceStatus</strong><small>@snapshot.Host.RunningVmCount running / @snapshot.Host.StoppedVmCount stopped</small></article>
+            </section>
+        }
+
+        <section class="panel performance-history-section">
+            <div class="panel-head">
+                <div><span class="eyebrow">Step 3.4.3</span><h2>Host performance history</h2><p class="muted">Stored one-minute summaries from the shared live monitor — no extra Hyper-V scan.</p></div>
+                <div class="performance-range-row">
+                    @foreach (var option in HistoryRanges)
+                    {
+                        <button class="button @(historyHours == option.Hours ? "active" : string.Empty)" @onclick="() => ChangeHistoryRange(option.Hours)" disabled="@historyLoading">@option.Label</button>
+                    }
+                </div>
+            </div>
+            @if (!string.IsNullOrWhiteSpace(historyError)) { <div class="alert">@historyError</div> }
+            <div class="performance-summary-grid">
+                <div><span>Average CPU</span><strong>@Average(hostHistory.Select(item => item.CpuPercent))</strong></div>
+                <div><span>Peak CPU</span><strong>@Peak(hostHistory.Select(item => item.CpuPercent))</strong></div>
+                <div><span>Average memory</span><strong>@Average(hostHistory.Select(item => item.MemoryPercent))</strong></div>
+                <div><span>Lowest disk free</span><strong>@Minimum(hostHistory.Select(item => item.DiskFreePercent))</strong></div>
+            </div>
+            <div class="performance-chart-grid">
+                <PerformanceLineChart Title="Host CPU and memory" Subtitle="Average utilization per stored time bucket" Times="@HostHistoryTimes" Series="@HostUtilizationSeries" Unit="%" Maximum="100" />
+                <PerformanceLineChart Title="System disk free" Subtitle="Free capacity percentage over time" Times="@HostHistoryTimes" Series="@HostDiskSeries" Unit="%" Maximum="100" />
+            </div>
+        </section>
+
+        <section class="panel monitoring-table-panel">
+            <div class="panel-head">
+                <div><h2>Virtual machines</h2><p class="muted">Current CPU, memory pressure, heartbeat, adapters, and I/O rates.</p></div>
+                <span class="pill">Read-only view</span>
+            </div>
+
+            @if (snapshot.Vms.Count == 0)
+            {
+                <div class="friendly-empty-state"><div class="empty-illustration">☁</div><div><h3>No virtual machines found</h3><p>The Hyper-V host returned an empty VM list.</p></div></div>
+            }
+            else
+            {
+                <div class="monitoring-table-wrap">
+                    <table class="data-table monitoring-table">
+                        <thead><tr><th>VPS</th><th>State</th><th>CPU</th><th>Memory</th><th>Network ↓ / ↑</th><th>Disk R / W</th><th>Heartbeat</th><th>Adapters</th><th>Uptime</th></tr></thead>
+                        <tbody>
+                        @foreach (var item in snapshot.Vms)
+                        {
+                            <tr class="@(item.HasWarning ? "monitoring-warning-row" : string.Empty)">
+                                <td><a class="server-link" href="@ServerHref(item.VmName)">@item.VmName</a><small class="monitoring-cell-note">@SampleAge(item.SampledAt)</small></td>
+                                <td><span class="pill @StateClass(item.State)">@PrettyState(item.State)</span></td>
+                                <td><strong>@item.CpuUsagePercent%</strong></td>
+                                <td><strong>@FormatBytes(item.MemoryAssignedBytes)</strong><small class="monitoring-cell-note">Demand @FormatBytes(item.MemoryDemandBytes) · @item.MemoryPressurePercent.ToString("0")%</small></td>
+                                <td><strong>@FormatRate(item.NetworkReceiveBytesPerSecond)</strong><small class="monitoring-cell-note">↑ @FormatRate(item.NetworkSendBytesPerSecond)</small></td>
+                                <td><strong>@FormatRate(item.DiskReadBytesPerSecond)</strong><small class="monitoring-cell-note">W @FormatRate(item.DiskWriteBytesPerSecond)</small></td>
+                                <td><span class="pill @(item.IsRunning ? (item.HeartbeatHealthy ? "online" : "warning") : string.Empty)">@item.HeartbeatStatus</span></td>
+                                <td>@item.ConnectedNetworkAdapterCount / @item.NetworkAdapterCount</td>
+                                <td>@FormatUptime(item.Uptime)</td>
+                            </tr>
+                        }
+                        </tbody>
+                    </table>
+                </div>
+            }
+        </section>
+    }
+}
+
+@code {
+    private LiveMonitoringOverview? snapshot;
+    private CancellationTokenSource? pollingCts;
+    private bool refreshing;
+    private string error = string.Empty;
+    private IReadOnlyList<HostPerformanceHistoryPoint> hostHistory = [];
+    private int historyHours = 24;
+    private bool historyLoading;
+    private string historyError = string.Empty;
+    private static readonly (int Hours, string Label)[] HistoryRanges = [(1, "1h"), (6, "6h"), (24, "24h"), (168, "7d"), (720, "30d")];
+    private IReadOnlyList<DateTime> HostHistoryTimes => hostHistory.Select(item => item.SampledAt).ToList();
+    private IReadOnlyList<PerformanceChartSeries> HostUtilizationSeries =>
+        [new("CPU", "#42d3ff", hostHistory.Select(item => item.CpuPercent).ToList()), new("Memory", "#a78bfa", hostHistory.Select(item => item.MemoryPercent).ToList())];
+    private IReadOnlyList<PerformanceChartSeries> HostDiskSeries =>
+        [new("Disk free", "#4ade80", hostHistory.Select(item => item.DiskFreePercent).ToList())];
+
+    protected override async Task OnInitializedAsync()
+    {
+        if (Session.User?.IsAdmin != true) return;
+        await Load(false);
+        await LoadHistory();
+        pollingCts = new CancellationTokenSource();
+        _ = PollAsync(pollingCts.Token);
+    }
+
+    private async Task ForceRefresh()
+    {
+        await Load(true);
+        await LoadHistory();
+    }
+
+    private async Task ChangeHistoryRange(int hours)
+    {
+        historyHours = hours;
+        await LoadHistory();
+    }
+
+    private async Task LoadHistory()
+    {
+        historyLoading = true; historyError = string.Empty;
+        try { hostHistory = await Panel.GetHostPerformanceHistoryAsync(Session.User, historyHours); }
+        catch (Exception ex) { historyError = ex.Message; }
+        finally { historyLoading = false; }
+    }
+
+    private async Task Load(bool force)
+    {
+        refreshing = force;
+        error = string.Empty;
+        try { snapshot = await Panel.GetLiveMonitoringOverviewAsync(Session.User, force); }
+        catch (Exception ex) { error = ex.Message; }
+        finally { refreshing = false; }
+    }
+
+    private async Task PollAsync(CancellationToken cancellationToken)
+    {
+        try
+        {
+            while (!cancellationToken.IsCancellationRequested)
+            {
+                await Task.Delay(TimeSpan.FromSeconds(snapshot?.PollSeconds ?? 5), cancellationToken);
+                await InvokeAsync(async () => { await Load(false); StateHasChanged(); });
+            }
+        }
+        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested) { }
+    }
+
+    private static string ServerHref(string vmName) => $"server?vm={Uri.EscapeDataString(vmName)}";
+    private static int Percent(double value) => (int)Math.Clamp(Math.Round(value), 0, 100);
+    private static double Ratio(long used, long total) => total <= 0 ? 0 : used * 100d / total;
+    private static string SampleAge(DateTime value) => value == DateTime.MinValue ? "No sample" : $"sampled {value.ToLocalTime():HH:mm:ss}";
+    private static string FormatUptime(TimeSpan value) => value <= TimeSpan.Zero ? "-" : $"{(int)value.TotalDays}d {value.Hours}h {value.Minutes}m";
+    private static string FormatRate(double bytesPerSecond) => $"{FormatBytes((long)Math.Max(0, bytesPerSecond))}/s";
+    private static string Average(IEnumerable<double> values) { var list = values.ToList(); return list.Count == 0 ? "—" : $"{list.Average():0.#}%"; }
+    private static string Peak(IEnumerable<double> values) { var list = values.ToList(); return list.Count == 0 ? "—" : $"{list.Max():0.#}%"; }
+    private static string Minimum(IEnumerable<double> values) { var list = values.ToList(); return list.Count == 0 ? "—" : $"{list.Min():0.#}%"; }
+
+    private static string FormatBytes(long bytes)
+    {
+        if (bytes <= 0) return "0 B";
+        string[] units = ["B", "KB", "MB", "GB", "TB"];
+        var value = (double)bytes;
+        var unit = 0;
+        while (value >= 1024 && unit < units.Length - 1) { value /= 1024; unit++; }
+        return $"{value:0.#} {units[unit]}";
+    }
+
+    private static string StateClass(string state) => state.Contains("Running", StringComparison.OrdinalIgnoreCase) || state == "2" ? "online" : state.Contains("Off", StringComparison.OrdinalIgnoreCase) || state == "3" ? "offline" : "warning";
+    private static string PrettyState(string state) => state switch { "2" => "Running", "3" => "Off", "32768" => "Paused", "32769" => "Suspended", _ => state };
+
+    public void Dispose()
+    {
+        pollingCts?.Cancel();
+        pollingCts?.Dispose();
+    }
+}

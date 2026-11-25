@@ -43,7 +43,15 @@ else
         </div>
         <div class="notice-card">
             <strong>Best workflow</strong>
-            <p>Prepare a clean golden VM, shut it down or let PenguinPanel stop it temporarily, then create a VHDX template. Templates enabled for clients will appear in the Reinstall tab on assigned servers.</p>
+            <p>
+                Prepare a clean golden Windows VM, create the VHDX template, then press <strong>Validate</strong>.
+                PenguinPanel boots an isolated temporary differencing-disk VM with <strong>no network adapter</strong>,
+                verifies the saved bootstrap login through Hyper-V PowerShell Direct, checks Windows/RDP, and deletes the test VM afterward.
+                @if (Panel.RequireValidatedTemplatesForClients)
+                {
+                    <span>Only templates that pass validation are shown to clients.</span>
+                }
+            </p>
         </div>
 
         @if (templateInProgress)
@@ -57,9 +65,32 @@ else
             </div>
         }
 
+        @if (validatingTemplateId > 0)
+        {
+            <div class="restore-progress-card template-validation-progress">
+                <div class="template-validation-progress-head">
+                    <strong>Validating @validatingTemplateName</strong>
+                    <span>@validationProgress%</span>
+                </div>
+                <p>@validationStatusText</p>
+                <div class="restore-progress-track">
+                    <div class="restore-progress-bar" style="width: @($"{validationProgress}%")"></div>
+                </div>
+                <div class="muted">
+                    Temporary VM is isolated from networking and is deleted when the test finishes.
+                </div>
+            </div>
+        }
+
         <div class="form-grid">
             <label>Name<input @bind="templateName" placeholder="Windows Server 2019" /></label>
             <label>Operating system<input @bind="templateOs" placeholder="Windows" /></label>
+            <label>Hyper-V generation
+                <select @bind="templateGeneration">
+                    <option value="2">Generation 2 — recommended</option>
+                    <option value="1">Generation 1 — legacy</option>
+                </select>
+            </label>
             <label class="full-row">Source VM for creating template
                 <select @bind="sourceVmName">
                     <option value="">Select VM when using Create template from VM</option>
@@ -71,7 +102,26 @@ else
             </label>
             <label class="full-row">Template storage folder<input @bind="templateStorageFolder" placeholder="D:\PenguinPanel\Templates" /></label>
             <label class="full-row">Existing VHD/VHDX template path<input @bind="templateIsoPath" placeholder="D:\PenguinPanel\Templates\WindowsServer2019.vhdx" /></label>
-            <label class="full-row">Client-facing reinstall message<textarea @bind="templateNotes" placeholder="Example: Default password after reinstall: Kossa123. Please change it after first login."></textarea></label>
+            <label>Bootstrap Windows username
+                <input @bind="templateBootstrapUsername" placeholder="Administrator" autocomplete="off" />
+            </label>
+            <label>Bootstrap Windows password
+                <input type="password"
+                       @bind="templateBootstrapPassword"
+                       autocomplete="new-password"
+                       placeholder="@(editingTemplateHasBootstrapPassword ? "Saved — blank keeps existing password" : "Required for Smart Reinstall")" />
+            </label>
+            <div class="notice-card full-row">
+                <strong>Smart Reinstall bootstrap</strong>
+                <p>
+                    This private credential is used only by PenguinPanel over Hyper-V PowerShell Direct after the fresh Windows template boots.
+                    <strong>When creating a template from a selected managed VM, you may leave the password blank:</strong>
+                    PenguinPanel will automatically inherit that VM's current encrypted Access username/password, because that is the login copied into the VHDX.
+                    For an <strong>existing VHD/VHDX file</strong>, enter the exact Windows password already baked into that image.
+                    Leaving the password blank while editing a template that already has one keeps the saved encrypted password.
+                </p>
+            </div>
+            <label class="full-row">Client-facing reinstall message<textarea @bind="templateNotes" placeholder="Example: FiveM-ready Windows image with XAMPP, HeidiSQL and Chrome preinstalled."></textarea></label>
             <label class="switch-row full-row"><input type="checkbox" @bind="templateEnabled" /> Enabled for clients</label>
             <div class="form-actions full-row button-row">
                 <button class="button primary" @onclick="CreateTemplateFromSelectedVm" disabled="@(busy || string.IsNullOrWhiteSpace(sourceVmName) || string.IsNullOrWhiteSpace(templateName))">Create template from selected VM</button>
@@ -99,19 +149,136 @@ else
         else
         {
             <table class="data-table compact-table">
-                <thead><tr><th>Name</th><th>OS</th><th>Client visible</th><th>Message shown after reinstall</th><th>Path</th><th>Actions</th></tr></thead>
+                <thead><tr><th>Template</th><th>Client availability</th><th>Validation</th><th>Detected system</th><th>Disk</th><th>Actions</th></tr></thead>
                 <tbody>
                     @foreach (var template in templates)
                     {
                         <tr>
-                            <td><strong>@template.Name</strong></td>
-                            <td>@template.OperatingSystem</td>
-                            <td><span class="pill">@(template.IsEnabled ? "Yes" : "No")</span></td>
-                            <td class="template-client-note-cell">@(string.IsNullOrWhiteSpace(template.Notes) ? "No message" : template.Notes)</td>
-                            <td>@template.IsoPath</td>
-                            <td class="button-row">
-                                <button class="button mini" @onclick="() => EditTemplate(template)" disabled="@busy">Edit</button>
-                                <button class="button mini danger" @onclick="() => DeleteTemplate(template.Id)" disabled="@busy">Delete</button>
+                            @{
+                                var bootstrapStatus = BootstrapStatusFor(template.Id);
+                                var validation = ValidationStatusFor(template.Id);
+                                var validationPassed =
+                                    validation?.IsCurrent == true
+                                    && string.Equals(
+                                        validation.Status,
+                                        "validated",
+                                        StringComparison.OrdinalIgnoreCase);
+                            }
+                            <td>
+                                <strong>@template.Name</strong>
+                                <div class="muted">@template.OperatingSystem · Gen @(validation?.VmGeneration ?? 2)</div>
+                                <div class="template-path-small">@template.IsoPath</div>
+                                @if (!string.IsNullOrWhiteSpace(template.Notes))
+                                {
+                                    <div class="template-note-small">@template.Notes</div>
+                                }
+                            </td>
+                            <td>
+                                @if (!template.IsEnabled)
+                                {
+                                    <span class="pill">Disabled</span>
+                                }
+                                else if (Panel.RequireValidatedTemplatesForClients && !validationPassed)
+                                {
+                                    <span class="pill warning-pill">Hidden until validated</span>
+                                }
+                                else
+                                {
+                                    <span class="pill online">Available to clients</span>
+                                }
+
+                                @if (bootstrapStatus?.HasPassword == true)
+                                {
+                                    <div class="muted">Bootstrap: @bootstrapStatus.Username · saved</div>
+                                }
+                                else
+                                {
+                                    <div class="muted validation-error-text">Bootstrap password missing</div>
+                                }
+                            </td>
+                            <td class="template-validation-cell">
+                                @if (validation is null
+                                    || string.Equals(validation.Status, "unverified", StringComparison.OrdinalIgnoreCase))
+                                {
+                                    <span class="pill warning-pill">Unverified</span>
+                                    <div class="muted">@(!string.IsNullOrWhiteSpace(validation?.Message) ? validation.Message : "Run Validate before client use.")</div>
+                                }
+                                else if (string.Equals(validation.Status, "validating", StringComparison.OrdinalIgnoreCase))
+                                {
+                                    <span class="pill">Validating…</span>
+                                    <div class="muted">@validation.Message</div>
+                                }
+                                else if (string.Equals(validation.Status, "validated", StringComparison.OrdinalIgnoreCase) && validation.IsCurrent)
+                                {
+                                    <span class="pill online">Validated</span>
+                                    <div class="validation-check-list">
+                                        <span>✓ PowerShell Direct</span>
+                                        <span>✓ Bootstrap login</span>
+                                        <span>✓ RDP service</span>
+                                        <span>✓ Isolated boot test</span>
+                                    </div>
+                                    @if (validation.CheckedAt is not null)
+                                    {
+                                        <div class="muted">Checked @validation.CheckedAt.Value.ToLocalTime().ToString("yyyy-MM-dd HH:mm")</div>
+                                    }
+                                }
+                                else if (string.Equals(validation.Status, "validated", StringComparison.OrdinalIgnoreCase) && !validation.IsCurrent)
+                                {
+                                    <span class="pill warning-pill">Template changed</span>
+                                    <div class="muted">The VHD/VHDX file changed after validation. Validate it again.</div>
+                                }
+                                else
+                                {
+                                    <span class="pill danger-pill">Validation failed</span>
+                                    <div class="validation-error-text">@validation.Message</div>
+                                }
+                            </td>
+                            <td>
+                                @if (validation is not null && !string.IsNullOrWhiteSpace(validation.WindowsProductName))
+                                {
+                                    <strong>@validation.WindowsProductName</strong>
+                                    <div class="muted">
+                                        @validation.Architecture · Build @validation.BuildNumber
+                                    </div>
+                                    <div class="muted">
+                                        RDP: @(validation.RdpServiceFound ? validation.RdpServiceStatus : "Not found")
+                                        @(validation.RdpEnabled ? " · enabled" : " · disabled in image")
+                                    </div>
+                                }
+                                else
+                                {
+                                    <span class="muted">Not detected yet</span>
+                                }
+                            </td>
+                            <td>
+                                @if (validation is not null && validation.VirtualDiskBytes > 0)
+                                {
+                                    <strong>@FormatBytes(validation.VirtualDiskBytes)</strong>
+                                    <div class="muted">@FormatBytes(validation.PhysicalDiskBytes) stored</div>
+                                }
+                                else
+                                {
+                                    <span class="muted">Not measured</span>
+                                }
+                            </td>
+                            <td>
+                                <div class="button-row">
+                                    <button class="button mini primary"
+                                            @onclick="() => ValidateTemplate(template)"
+                                            disabled="@(busy || validatingTemplateId > 0 || bootstrapStatus?.HasPassword != true)">
+                                        Validate
+                                    </button>
+                                    <button class="button mini"
+                                            @onclick="() => EditTemplate(template)"
+                                            disabled="@(busy || validatingTemplateId > 0)">
+                                        Edit
+                                    </button>
+                                    <button class="button mini danger"
+                                            @onclick="() => DeleteTemplate(template.Id)"
+                                            disabled="@(busy || validatingTemplateId > 0)">
+                                        Delete
+                                    </button>
+                                </div>
                             </td>
                         </tr>
                     }
@@ -123,17 +290,27 @@ else
 
 @code {
     private IReadOnlyList<VmTemplate> templates = [];
+    private IReadOnlyList<VmTemplateBootstrapStatus> templateBootstrapStatuses = [];
+    private IReadOnlyList<VmTemplateValidationStatus> templateValidationStatuses = [];
     private IReadOnlyList<VmInfo> vms = [];
     private bool busy;
     private bool templateInProgress;
+    private long validatingTemplateId;
+    private string validatingTemplateName = string.Empty;
+    private int validationProgress;
+    private string validationStatusText = string.Empty;
     private string? message;
     private string messageClass = "alert success";
     private string templateStatus = string.Empty;
     private string sourceVmName = string.Empty;
     private string templateName = string.Empty;
     private string templateOs = "Windows";
+    private int templateGeneration = 2;
     private string templateStorageFolder = @"D:\PenguinPanel\Templates";
     private string templateIsoPath = string.Empty;
+    private string templateBootstrapUsername = "Administrator";
+    private string templateBootstrapPassword = string.Empty;
+    private bool editingTemplateHasBootstrapPassword;
     private string templateNotes = string.Empty;
     private bool templateEnabled = true;
 
@@ -152,6 +329,10 @@ else
         {
             messageClass = "alert success";
             templates = await Panel.GetVmTemplatesAsync(Session.User);
+            templateBootstrapStatuses =
+                await Panel.GetVmTemplateBootstrapStatusesAsync(Session.User);
+            templateValidationStatuses =
+                await Panel.GetVmTemplateValidationStatusesAsync(Session.User);
             vms = await Panel.GetVmsAsync(Session.User);
         }
         catch (Exception ex)
@@ -185,7 +366,16 @@ else
 
         try
         {
-            var result = await Panel.CreateTemplateFromVmAsync(Session.User, sourceVmName, templateName, templateOs, templateStorageFolder, templateNotes, templateEnabled);
+            var result = await Panel.CreateTemplateFromVmAsync(
+                Session.User,
+                sourceVmName,
+                templateName,
+                templateOs,
+                templateStorageFolder,
+                templateNotes,
+                templateEnabled,
+                templateBootstrapUsername,
+                templateBootstrapPassword);
             templateStatus = result.Message;
             message = $"Template saved: {result.TemplatePath}";
             ClearForm(keepMessage: true);
@@ -213,7 +403,18 @@ else
             messageClass = "alert success";
             var template = new VmTemplate(0, templateName, templateOs, templateIsoPath, templateNotes, templateEnabled, DateTime.UtcNow);
             var id = await Panel.SaveVmTemplateAsync(Session.User, template);
-            message = $"Template saved. If a template with the same name already existed, it was updated instead of duplicated. ID: {id}";
+            await Panel.SaveVmTemplateBootstrapCredentialAsync(
+                Session.User,
+                id,
+                templateBootstrapUsername,
+                templateBootstrapPassword);
+            await Panel.SaveVmTemplateGenerationAsync(
+                Session.User,
+                id,
+                templateGeneration);
+            message = string.IsNullOrWhiteSpace(templateBootstrapPassword) && !editingTemplateHasBootstrapPassword
+                ? $"Template saved, but Smart Reinstall is not ready until a bootstrap Windows password is saved. ID: {id}"
+                : $"Template saved with encrypted Smart Reinstall bootstrap credential. ID: {id}";
             ClearForm(keepMessage: true);
             await Load();
         }
@@ -233,8 +434,85 @@ else
         templateName = template.Name;
         templateOs = string.IsNullOrWhiteSpace(template.OperatingSystem) ? "Windows" : template.OperatingSystem;
         templateIsoPath = template.IsoPath;
+        templateGeneration = ValidationStatusFor(template.Id)?.VmGeneration ?? 2;
+        var bootstrap = BootstrapStatusFor(template.Id);
+        templateBootstrapUsername =
+            string.IsNullOrWhiteSpace(bootstrap?.Username)
+                ? "Administrator"
+                : bootstrap!.Username;
+        templateBootstrapPassword = string.Empty;
+        editingTemplateHasBootstrapPassword = bootstrap?.HasPassword == true;
         templateNotes = template.Notes;
         templateEnabled = template.IsEnabled;
+    }
+
+    private async Task ValidateTemplate(VmTemplate template)
+    {
+        var bootstrap = BootstrapStatusFor(template.Id);
+        if (bootstrap?.HasPassword != true)
+        {
+            messageClass = "alert";
+            message = "Save the template's bootstrap Windows password before validation.";
+            return;
+        }
+
+        busy = true;
+        validatingTemplateId = template.Id;
+        validatingTemplateName = template.Name;
+        validationProgress = 1;
+        validationStatusText = "Preparing validation...";
+        message = null;
+        messageClass = "alert success";
+        await InvokeAsync(StateHasChanged);
+
+        try
+        {
+            var result = await Panel.ValidateVmTemplateAsync(
+                Session.User,
+                template.Id,
+                async (percent, status) =>
+                {
+                    await InvokeAsync(() =>
+                    {
+                        validationProgress = percent;
+                        validationStatusText = status;
+                        StateHasChanged();
+                    });
+                });
+
+            if (string.Equals(
+                    result.Status,
+                    "validated",
+                    StringComparison.OrdinalIgnoreCase)
+                && result.IsCurrent)
+            {
+                messageClass = "alert success";
+                message =
+                    $"Template validated successfully: {result.WindowsProductName} "
+                    + $"build {result.BuildNumber}, {result.Architecture}, Gen {result.VmGeneration}.";
+            }
+            else
+            {
+                messageClass = "alert";
+                message = "Template validation failed: " + result.Message;
+            }
+
+            await Load();
+        }
+        catch (Exception ex)
+        {
+            messageClass = "alert";
+            message = "Template validation failed: " + ex.Message;
+        }
+        finally
+        {
+            validatingTemplateId = 0;
+            validatingTemplateName = string.Empty;
+            validationProgress = 0;
+            validationStatusText = string.Empty;
+            busy = false;
+            await InvokeAsync(StateHasChanged);
+        }
     }
 
     private async Task DeleteTemplate(long id)
@@ -264,12 +542,35 @@ else
         }
     }
 
+    private VmTemplateBootstrapStatus? BootstrapStatusFor(long templateId) =>
+        templateBootstrapStatuses.FirstOrDefault(item => item.TemplateId == templateId);
+
+    private VmTemplateValidationStatus? ValidationStatusFor(long templateId) =>
+        templateValidationStatuses.FirstOrDefault(item => item.TemplateId == templateId);
+
+    private static string FormatBytes(long bytes)
+    {
+        if (bytes <= 0)
+        {
+            return "0 GB";
+        }
+
+        var gb = bytes / 1024d / 1024d / 1024d;
+        return gb >= 100
+            ? $"{gb:0} GB"
+            : $"{gb:0.0} GB";
+    }
+
     private void ClearForm(bool keepMessage = false)
     {
         sourceVmName = string.Empty;
         templateName = string.Empty;
         templateOs = "Windows";
+        templateGeneration = 2;
         templateIsoPath = string.Empty;
+        templateBootstrapUsername = "Administrator";
+        templateBootstrapPassword = string.Empty;
+        editingTemplateHasBootstrapPassword = false;
         templateNotes = string.Empty;
         templateEnabled = true;
         if (!keepMessage)

@@ -1,0 +1,95 @@
+@using System.Globalization
+
+<article class="performance-chart-card">
+    <div class="performance-chart-head">
+        <div><h3>@Title</h3><p>@Subtitle</p></div>
+        @if (Times.Count > 0) { <span class="pill">@Times.Count points</span> }
+    </div>
+    @if (Times.Count < 2 || Series.Count == 0)
+    {
+        <div class="performance-chart-empty">Collecting history — the graph appears after two stored samples.</div>
+    }
+    else
+    {
+        <div class="performance-chart-legend">
+            @foreach (var series in Series)
+            {
+                <span><i style="background:@series.Color"></i>@series.Name <strong>@FormatValue(series.Values.LastOrDefault())</strong></span>
+            }
+        </div>
+        <svg class="performance-chart" viewBox="0 0 720 240" role="img" aria-label="@Title performance chart">
+            @for (var line = 0; line <= 4; line++)
+            {
+                var y = Top + PlotHeight * line / 4d;
+                var value = ChartMax * (4 - line) / 4d;
+                <line x1="@Left" y1="@F(y)" x2="@(Left + PlotWidth)" y2="@F(y)" class="performance-grid-line" />
+                <foreignObject x="0" y="@F(y - 9)" width="56" height="20">
+                    <div class="performance-axis-label performance-y-label">@FormatValue(value)</div>
+                </foreignObject>
+            }
+            @foreach (var series in Series)
+            {
+                <polyline points="@Points(series.Values)" fill="none" stroke="@series.Color" stroke-width="3" stroke-linejoin="round" stroke-linecap="round" />
+            }
+            <foreignObject x="@Left" y="211" width="140" height="24">
+                <div class="performance-axis-label">@Times.First().ToLocalTime().ToString(TimeLabelFormat)</div>
+            </foreignObject>
+            <foreignObject x="@(Left + PlotWidth - 140)" y="211" width="140" height="24">
+                <div class="performance-axis-label performance-x-label-end">@Times.Last().ToLocalTime().ToString(TimeLabelFormat)</div>
+            </foreignObject>
+        </svg>
+    }
+</article>
+
+@code {
+    [Parameter] public string Title { get; set; } = string.Empty;
+    [Parameter] public string Subtitle { get; set; } = string.Empty;
+    [Parameter] public IReadOnlyList<DateTime> Times { get; set; } = [];
+    [Parameter] public IReadOnlyList<PerformanceChartSeries> Series { get; set; } = [];
+    [Parameter] public string Unit { get; set; } = "%";
+    [Parameter] public double? Maximum { get; set; }
+
+    private const double Left = 64;
+    private const double Top = 16;
+    private const double PlotWidth = 638;
+    private const double PlotHeight = 184;
+    private double ChartMax => Maximum ?? NiceMaximum(Series.SelectMany(item => item.Values).DefaultIfEmpty(1).Max());
+    private string TimeLabelFormat => Times.Count > 1 && Times.Last() - Times.First() > TimeSpan.FromHours(30) ? "MMM d HH:mm" : "HH:mm";
+
+    private string Points(IReadOnlyList<double> values)
+    {
+        if (values.Count == 0) return string.Empty;
+        var count = Math.Min(values.Count, Times.Count);
+        return string.Join(" ", Enumerable.Range(0, count).Select(index =>
+        {
+            var x = count == 1 ? Left : Left + PlotWidth * index / (count - 1d);
+            var y = Top + PlotHeight - Math.Clamp(values[index], 0, ChartMax) / ChartMax * PlotHeight;
+            return $"{F(x)},{F(y)}";
+        }));
+    }
+
+    private string FormatValue(double value)
+    {
+        if (Unit == "%") return $"{value:0.#}%";
+        if (Unit == "B/s") return FormatRate(value);
+        return $"{value:0.#} {Unit}".TrimEnd();
+    }
+
+    private static double NiceMaximum(double value)
+    {
+        if (value <= 0) return 1;
+        var power = Math.Pow(10, Math.Floor(Math.Log10(value)));
+        return Math.Ceiling(value / power) * power;
+    }
+
+    private static string FormatRate(double bytesPerSecond)
+    {
+        string[] units = ["B/s", "KB/s", "MB/s", "GB/s", "TB/s"];
+        var value = Math.Max(0, bytesPerSecond);
+        var unit = 0;
+        while (value >= 1024 && unit < units.Length - 1) { value /= 1024; unit++; }
+        return $"{value:0.#} {units[unit]}";
+    }
+
+    private static string F(double value) => value.ToString("0.##", CultureInfo.InvariantCulture);
+}

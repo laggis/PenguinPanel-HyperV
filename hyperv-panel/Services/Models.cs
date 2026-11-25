@@ -28,6 +28,8 @@ public sealed record UserVmPermissions(
     {
         "console" => CanViewConsole,
         "resources" => CanViewResources,
+        "monitoring" => CanViewResources,
+        "health" => CanViewSettings,
         "access" => CanViewAccess,
         "recovery" => CanViewAccess,
         "network" => CanViewNetwork,
@@ -107,7 +109,54 @@ public sealed record VmCheckpointInfo(
     string Name,
     string Id,
     string SnapshotType,
-    DateTime CreationTime);
+    DateTime CreationTime,
+    long DiskFootprintBytes);
+
+public sealed record VmQuickSnapshotMetadata(
+    string VmName,
+    string SnapshotId,
+    string SnapshotName,
+    string Description,
+    bool IsPinned,
+    bool IsTemporarySafety,
+    DateTime? ExpiresAt,
+    long? CreatedByUserId,
+    string CreatedByUsername,
+    DateTime CreatedAt,
+    DateTime UpdatedAt);
+
+public sealed record VmQuickRestorePointInfo(
+    string Name,
+    string Id,
+    string SnapshotType,
+    DateTime CreationTime,
+    long DiskFootprintBytes,
+    string Description,
+    bool IsPinned,
+    bool IsTemporarySafety,
+    DateTime? ExpiresAt,
+    bool IsExpired);
+
+public sealed record VmQuickSnapshotStorageStatus(
+    int RestorePointCount,
+    int ManualRestorePointCount,
+    int TemporarySafetyCount,
+    int ExpiredUnpinnedCount,
+    int MaxRestorePointsPerVm,
+    int RecommendedMaxAgeDays,
+    int SafetyRetentionHours,
+    long TotalAvhdxBytes,
+    long WarningStorageBytes,
+    bool StorageWarning);
+
+public sealed record QuickRestorePointRestoreResult(
+    string VmName,
+    string RestorePointName,
+    string SafetyRestorePointName,
+    bool WasRunning,
+    string PreviousState,
+    string FinalState,
+    string Message);
 
 public sealed record VmNetworkPortProfile(
     string VmName,
@@ -179,16 +228,184 @@ public sealed record GuestNetworkRepairResult(
     bool PanelReachable,
     string Message);
 
+public sealed record VmGuestDnsStatus(
+    string VmName,
+    string InterfaceAlias,
+    IReadOnlyList<string> DnsServers,
+    DateTime CheckedAt);
+
 public sealed record VmRdpListenerStatus(
     string VmName,
     int Port,
     bool RemoteDesktopEnabled,
     bool TermServiceRunning,
     bool TcpListening,
+    bool UdpListening,
     DateTime CheckedAt)
 {
     public bool IsReady => RemoteDesktopEnabled && TermServiceRunning && TcpListening;
+    public bool IsUdpReady => RemoteDesktopEnabled && TermServiceRunning && UdpListening;
 }
+
+public sealed record HyperVConsoleFrame(
+    string VmName,
+    string DataUri,
+    int Width,
+    int Height,
+    int VirtualWidth,
+    int VirtualHeight,
+    DateTime CapturedAt);
+
+public sealed record VmHostPortHealth(
+    string Label,
+    string Protocol,
+    int ExternalPort,
+    int InternalPort,
+    bool NatHealthy,
+    bool HostFirewallHealthy,
+    string NatDetails,
+    string HostFirewallDetails);
+
+public sealed record VmHostInfrastructureHealth(
+    string VmName,
+    bool VmExists,
+    string VmState,
+    string DiskPath,
+    bool DiskExists,
+    string NatName,
+    bool NatExists,
+    string ExpectedInternalIp,
+    IReadOnlyList<string> HyperVReportedIps,
+    bool InternalIpObserved,
+    IReadOnlyList<VmHostPortHealth> Ports,
+    DateTime CheckedAt);
+
+public sealed record VmHealthCheck(
+    string Key,
+    string Name,
+    string Status,
+    string Summary,
+    string Details,
+    bool Repairable);
+
+public sealed record VmHealthReport(
+    string VmName,
+    string OverallStatus,
+    IReadOnlyList<VmHealthCheck> Checks,
+    DateTime CheckedAt);
+
+public sealed record VmHealthRepairResult(
+    string VmName,
+    int RepairActions,
+    IReadOnlyList<string> Actions,
+    IReadOnlyList<string> Warnings,
+    VmHealthReport Report,
+    string Message);
+
+public sealed record ConsistencyHostVm(
+    string Name,
+    string State,
+    string VmPath,
+    IReadOnlyList<string> DiskPaths);
+
+public sealed record ConsistencyNatMapping(
+    string NatName,
+    string Protocol,
+    string ExternalIpAddress,
+    int ExternalPort,
+    string InternalIpAddress,
+    int InternalPort);
+
+public sealed record ConsistencyFirewallRule(
+    string Name,
+    string DisplayName,
+    string Group,
+    string Protocol,
+    string LocalPort,
+    string Direction,
+    string Action,
+    bool Enabled);
+
+public sealed record ConsistencyStorageDisk(
+    string Root,
+    string Path,
+    long SizeBytes);
+
+public sealed record ConsistencyHostInventory(
+    string NatName,
+    bool NatExists,
+    IReadOnlyList<ConsistencyHostVm> Vms,
+    IReadOnlyList<ConsistencyNatMapping> NatMappings,
+    IReadOnlyList<ConsistencyFirewallRule> ManagedFirewallRules,
+    IReadOnlyList<ConsistencyStorageDisk> StorageDisks,
+    DateTime CheckedAt);
+
+public sealed record VmRecoveryInventory(
+    string VmName,
+    bool IsEnabled,
+    string Username,
+    bool HasSecret,
+    string LastError,
+    DateTime UpdatedAt);
+
+public sealed record ConsistencyIssue(
+    string Key,
+    string Severity,
+    string Category,
+    string Resource,
+    string Summary,
+    string Details,
+    string SuggestedAction,
+    bool SafeCleanupCandidate);
+
+public sealed record ConsistencyScanReport(
+    string OverallStatus,
+    int HyperVVmCount,
+    int ProfileCount,
+    int WhmcsServiceCount,
+    int NatMappingCount,
+    int ManagedFirewallRuleCount,
+    int StorageDiskCount,
+    int CriticalCount,
+    int WarningCount,
+    int ReviewCount,
+    int SafeCleanupCandidateCount,
+    IReadOnlyList<ConsistencyIssue> Issues,
+    DateTime ScannedAt);
+
+public sealed record ConsistencyCleanupAction(
+    string ActionKey,
+    string Kind,
+    string Category,
+    string Resource,
+    string Summary,
+    string Details,
+    string VmName,
+    string Protocol,
+    int ExternalPort,
+    string InternalIpAddress,
+    int InternalPort,
+    string FirewallRuleName,
+    string FirewallDisplayName,
+    long RecordId);
+
+public sealed record ConsistencyCleanupPlan(
+    IReadOnlyList<ConsistencyCleanupAction> Actions,
+    DateTime GeneratedAt);
+
+public sealed record ConsistencyCleanupExecutionItem(
+    string ActionKey,
+    string Resource,
+    string Status,
+    string Message);
+
+public sealed record ConsistencyCleanupResult(
+    int AppliedCount,
+    int SkippedCount,
+    int FailedCount,
+    IReadOnlyList<ConsistencyCleanupExecutionItem> Items,
+    ConsistencyScanReport Report,
+    DateTime CompletedAt);
 
 public sealed record VmTemplate(
     long Id,
@@ -198,6 +415,54 @@ public sealed record VmTemplate(
     string Notes,
     bool IsEnabled,
     DateTime CreatedAt);
+
+public sealed record VmTemplateBootstrapCredential(
+    long TemplateId,
+    string Username,
+    string Password);
+
+public sealed record VmTemplateBootstrapStatus(
+    long TemplateId,
+    string Username,
+    bool HasPassword);
+
+public sealed record VmTemplateValidationStatus(
+    long TemplateId,
+    int VmGeneration,
+    string Status,
+    string Message,
+    string WindowsProductName,
+    string WindowsVersion,
+    string BuildNumber,
+    string Architecture,
+    bool PowerShellDirectOk,
+    bool RdpServiceFound,
+    bool RdpEnabled,
+    string RdpServiceStatus,
+    long VirtualDiskBytes,
+    long PhysicalDiskBytes,
+    long TemplateLastWriteUtcTicks,
+    DateTime? CheckedAt,
+    bool IsCurrent);
+
+public sealed record VmTemplateValidationSandbox(
+    string VmName,
+    string WorkingDirectory,
+    string DifferencingDiskPath,
+    long VirtualDiskBytes,
+    long PhysicalDiskBytes,
+    long TemplateLastWriteUtcTicks,
+    int Generation);
+
+public sealed record VmTemplateGuestValidationInfo(
+    string ComputerName,
+    string WindowsProductName,
+    string WindowsVersion,
+    string BuildNumber,
+    string Architecture,
+    bool RdpServiceFound,
+    bool RdpEnabled,
+    string RdpServiceStatus);
 
 public sealed record VmStorageRootStatus(
     string Path,
@@ -336,21 +601,188 @@ public sealed record ReinstallJob(
 public sealed record VmTemplateCreateResult(
     string TemplatePath,
     bool WasRunning,
+    int Generation,
     string Message);
+
+public sealed record VmReinstallPreflight(
+    string VmName,
+    string TemplateName,
+    string CurrentDiskPath,
+    long CurrentVirtualDiskBytes,
+    long CurrentPhysicalDiskBytes,
+    long TemplateVirtualDiskBytes,
+    long TemplatePhysicalDiskBytes,
+    int CheckpointCount,
+    long TargetFreeBytes,
+    long TargetTotalBytes,
+    long RequiredReserveBytes,
+    bool GuestAutomationConfigured,
+    bool CanProceed,
+    IReadOnlyList<string> Warnings,
+    string Summary);
 
 public sealed record VmReinstallResult(
     string VmName,
     string TemplateName,
     string TemplatePath,
     string NewDiskPath,
+    string OldDiskRollbackPath,
+    long DiskSizeBytes,
     bool WasRunning,
     string PreviousState,
     string FinalState,
+    bool GuestConfigured,
+    string WindowsUsername,
+    IReadOnlyList<string> Warnings,
     string Message);
 
 public sealed record CheckpointRestoreResult(
     string VmName,
     string CheckpointName,
+    bool WasRunning,
+    string PreviousState,
+    string FinalState,
+    string Message);
+
+public sealed record VmReinstallRollbackInfo(
+    long Id,
+    string VmName,
+    string TemplateName,
+    string RollbackDiskPath,
+    string ReinstalledDiskPath,
+    long VirtualDiskBytes,
+    long PhysicalDiskBytes,
+    string Status,
+    bool WasRunning,
+    string PreviousState,
+    DateTime CreatedAt,
+    DateTime ExpiresAt,
+    DateTime? RestoredAt,
+    DateTime? DeletedAt,
+    string LastError)
+{
+    public bool IsExpired => DateTime.UtcNow >= ExpiresAt;
+}
+
+public sealed record VmReinstallRollbackCleanupResult(
+    int Scanned,
+    int Deleted,
+    int Failed,
+    long FreedBytes,
+    DateTime CompletedAt);
+
+public sealed record VmReinstallRollbackSecret(
+    VmReinstallRollbackInfo Info,
+    VmAccessInfo PreviousAccess);
+
+public sealed record VmReinstallRollbackDiskRestoreResult(
+    string VmName,
+    string RestoredDiskPath,
+    string RemovedReinstalledDiskPath,
+    string PreviousState,
+    string FinalState,
+    bool WasRunning,
+    string Message);
+
+public sealed record VmReinstallRollbackRestoreResult(
+    VmReinstallRollbackInfo Rollback,
+    string FinalState,
+    IReadOnlyList<string> Warnings,
+    string Message);
+
+public sealed record VmBackupDiskSource(
+    string Path,
+    string ControllerType,
+    int ControllerNumber,
+    int ControllerLocation,
+    long PhysicalSizeBytes,
+    long VirtualSizeBytes,
+    long EstimatedBackupBytes,
+    bool IsDifferencing);
+
+public sealed record VmBackupSourceInfo(
+    string VmName,
+    string State,
+    int CpuCores,
+    long MemoryStartupBytes,
+    int Generation,
+    int CheckpointCount,
+    IReadOnlyList<VmBackupDiskSource> Disks);
+
+public sealed record VmBackupDiskRestoreRequest(
+    string BackupPath,
+    string ControllerType,
+    int ControllerNumber,
+    int ControllerLocation);
+
+public sealed record VmBackupDiskManifest(
+    string RelativePath,
+    string OriginalPath,
+    string ControllerType,
+    int ControllerNumber,
+    int ControllerLocation,
+    long FileSizeBytes,
+    long VirtualSizeBytes);
+
+public sealed record VmBackupManifest(
+    int Version,
+    string VmName,
+    string BackupName,
+    string BackupType,
+    string OriginalVmState,
+    int CpuCores,
+    long MemoryStartupBytes,
+    int Generation,
+    IReadOnlyList<VmBackupDiskManifest> Disks,
+    DateTime CreatedAt);
+
+public sealed record VmFullBackupInfo(
+    long Id,
+    string VmName,
+    string Name,
+    string BackupType,
+    string Status,
+    string BackupPath,
+    string ManifestPath,
+    long TotalBytes,
+    int DiskCount,
+    bool WasRunning,
+    long? CreatedByUserId,
+    string CreatedByUsername,
+    string LastError,
+    DateTime CreatedAt,
+    DateTime? CompletedAt);
+
+public sealed record VmBackupStorageRootStatus(
+    string Path,
+    bool IsDefault,
+    bool IsAvailable,
+    long FreeBytes,
+    long TotalBytes,
+    long ReserveBytes,
+    string Error);
+
+public sealed record VmBackupStorageStatus(
+    string RootPath,
+    bool IsAvailable,
+    long FreeBytes,
+    long TotalBytes,
+    long ReserveBytes,
+    int MaxBackupsPerVm,
+    string Error,
+    string SelectionMode,
+    IReadOnlyList<VmBackupStorageRootStatus> Roots);
+
+public sealed record VmFullBackupResult(
+    VmFullBackupInfo Backup,
+    string Message);
+
+public sealed record VmFullBackupRestoreResult(
+    string VmName,
+    long BackupId,
+    string BackupName,
+    long SafetyBackupId,
+    string SafetyBackupName,
     bool WasRunning,
     string PreviousState,
     string FinalState,
@@ -412,6 +844,404 @@ public sealed record HostNodeStatus(
     int StoppedVmCount,
     string HyperVServiceStatus,
     DateTime UpdatedAt);
+
+public sealed record VmMonitoringMeterSample(
+    string VmName,
+    string State,
+    string Status,
+    int CpuUsagePercent,
+    long MemoryAssignedBytes,
+    long MemoryDemandBytes,
+    TimeSpan Uptime,
+    string HeartbeatStatus,
+    bool HeartbeatHealthy,
+    int NetworkAdapterCount,
+    int ConnectedNetworkAdapterCount,
+    bool ResourceMeteringEnabled,
+    long NetworkReceivedBytes,
+    long NetworkSentBytes,
+    long DiskReadBytes,
+    long DiskWrittenBytes,
+    DateTime SampledAt);
+
+public sealed record HyperVLiveMonitoringBatch(
+    HostNodeStatus Host,
+    IReadOnlyList<VmMonitoringMeterSample> Vms,
+    DateTime SampledAt);
+
+public sealed record VmLiveMonitoringSnapshot(
+    string VmName,
+    string State,
+    string Status,
+    int CpuUsagePercent,
+    long MemoryAssignedBytes,
+    long MemoryDemandBytes,
+    TimeSpan Uptime,
+    string HeartbeatStatus,
+    bool HeartbeatHealthy,
+    int NetworkAdapterCount,
+    int ConnectedNetworkAdapterCount,
+    bool ResourceMeteringEnabled,
+    double NetworkReceiveBytesPerSecond,
+    double NetworkSendBytesPerSecond,
+    double DiskReadBytesPerSecond,
+    double DiskWriteBytesPerSecond,
+    DateTime SampledAt)
+{
+    public bool IsRunning => State.Contains("Running", StringComparison.OrdinalIgnoreCase) || State == "2";
+
+    public double MemoryPressurePercent => MemoryAssignedBytes <= 0
+        ? 0
+        : Math.Clamp(MemoryDemandBytes * 100d / MemoryAssignedBytes, 0, 999);
+
+    public bool HasWarning => IsRunning
+        && (!HeartbeatHealthy || ConnectedNetworkAdapterCount < NetworkAdapterCount || MemoryPressurePercent >= 90);
+}
+
+public sealed record LiveMonitoringOverview(
+    HostNodeStatus? Host,
+    IReadOnlyList<VmLiveMonitoringSnapshot> Vms,
+    DateTime SampledAt,
+    int PollSeconds,
+    int StaleAfterSeconds,
+    string LastError)
+{
+    public bool HasSample => SampledAt != DateTime.MinValue;
+    public bool IsStale => !HasSample || DateTime.UtcNow - SampledAt > TimeSpan.FromSeconds(StaleAfterSeconds);
+}
+
+public sealed class PerformanceHistoryConfig
+{
+    public bool Enabled { get; set; }
+    public int RetentionDays { get; set; }
+
+    public PerformanceHistoryConfig(bool enabled, int retentionDays)
+    {
+        Enabled = enabled;
+        RetentionDays = retentionDays;
+    }
+
+    public static PerformanceHistoryConfig Default => new(true, 30);
+}
+
+public sealed record HostPerformanceHistoryPoint(
+    DateTime SampledAt,
+    double CpuPercent,
+    double MemoryPercent,
+    double DiskFreePercent,
+    int RunningVmCount,
+    int TotalVmCount);
+
+public sealed record VmPerformanceHistoryPoint(
+    DateTime SampledAt,
+    double CpuPercent,
+    double MemoryPressurePercent,
+    double NetworkReceiveBytesPerSecond,
+    double NetworkSendBytesPerSecond,
+    double DiskReadBytesPerSecond,
+    double DiskWriteBytesPerSecond,
+    bool IsRunning);
+
+public sealed record PerformanceHistoryRuntimeStatus(
+    bool IsRunning,
+    DateTime? LastStoredAt,
+    DateTime? LastCleanupAt,
+    string LastMessage,
+    int CollectionSeconds,
+    long HostSampleCount,
+    long VmSampleCount);
+
+public sealed record PerformanceChartSeries(string Name, string Color, IReadOnlyList<double> Values);
+
+public sealed class MonitoringAlertConfig
+{
+    public MonitoringAlertConfig(
+        bool enabled,
+        bool emailEnabled,
+        bool recoveryEmails,
+        int requiredConsecutiveSamples,
+        int reminderMinutes,
+        double hostCpuPercent,
+        double hostMemoryPercent,
+        double hostDiskFreePercent,
+        double vmCpuPercent,
+        double vmMemoryPressurePercent,
+        bool heartbeatAlerts,
+        bool adapterAlerts)
+    {
+        Enabled = enabled;
+        EmailEnabled = emailEnabled;
+        RecoveryEmails = recoveryEmails;
+        RequiredConsecutiveSamples = requiredConsecutiveSamples;
+        ReminderMinutes = reminderMinutes;
+        HostCpuPercent = hostCpuPercent;
+        HostMemoryPercent = hostMemoryPercent;
+        HostDiskFreePercent = hostDiskFreePercent;
+        VmCpuPercent = vmCpuPercent;
+        VmMemoryPressurePercent = vmMemoryPressurePercent;
+        HeartbeatAlerts = heartbeatAlerts;
+        AdapterAlerts = adapterAlerts;
+    }
+
+    public bool Enabled { get; set; }
+    public bool EmailEnabled { get; set; }
+    public bool RecoveryEmails { get; set; }
+    public int RequiredConsecutiveSamples { get; set; }
+    public int ReminderMinutes { get; set; }
+    public double HostCpuPercent { get; set; }
+    public double HostMemoryPercent { get; set; }
+    public double HostDiskFreePercent { get; set; }
+    public double VmCpuPercent { get; set; }
+    public double VmMemoryPressurePercent { get; set; }
+    public bool HeartbeatAlerts { get; set; }
+    public bool AdapterAlerts { get; set; }
+
+    public static MonitoringAlertConfig Default => new(true, true, true, 3, 30, 90, 90, 10, 90, 100, true, true);
+}
+
+public sealed record MonitoringAlert(
+    long Id,
+    string AlertKey,
+    string ScopeType,
+    string ScopeName,
+    string AlertType,
+    string Severity,
+    string Title,
+    string Message,
+    double? CurrentValue,
+    double? ThresholdValue,
+    string Status,
+    int OccurrenceCount,
+    DateTime FirstTriggeredAt,
+    DateTime LastTriggeredAt,
+    DateTime? LastNotifiedAt,
+    DateTime? AcknowledgedAt,
+    string AcknowledgedBy,
+    DateTime? ResolvedAt,
+    string ResolutionMessage)
+{
+    public bool IsOpen => Status is "active" or "acknowledged";
+    public bool IsAcknowledged => Status == "acknowledged";
+}
+
+public sealed record MonitoringAlertRuntimeStatus(
+    bool IsRunning,
+    DateTime? StartedAt,
+    DateTime? LastEvaluationAt,
+    string LastMessage,
+    int OpenAlertCount,
+    int PendingConditionCount);
+
+public sealed class VmAvailabilityConfig
+{
+    public VmAvailabilityConfig(
+        bool enabled,
+        bool clientEmailEnabled,
+        bool notifyAdmins,
+        int unexpectedDownMinutes,
+        int guestUnresponsiveMinutes,
+        int extendedDowntimeMinutes,
+        bool recoveryNotifications)
+    {
+        Enabled = enabled;
+        ClientEmailEnabled = clientEmailEnabled;
+        NotifyAdmins = notifyAdmins;
+        UnexpectedDownMinutes = unexpectedDownMinutes;
+        GuestUnresponsiveMinutes = guestUnresponsiveMinutes;
+        ExtendedDowntimeMinutes = extendedDowntimeMinutes;
+        RecoveryNotifications = recoveryNotifications;
+    }
+
+    public bool Enabled { get; set; }
+    public bool ClientEmailEnabled { get; set; }
+    public bool NotifyAdmins { get; set; }
+    public int UnexpectedDownMinutes { get; set; }
+    public int GuestUnresponsiveMinutes { get; set; }
+    public int ExtendedDowntimeMinutes { get; set; }
+    public bool RecoveryNotifications { get; set; }
+
+    public static VmAvailabilityConfig Default => new(true, true, true, 1, 10, 60, true);
+}
+
+public sealed class VmAvailabilityPreference
+{
+    public VmAvailabilityPreference(
+        long userId,
+        string vmName,
+        bool enabled,
+        bool unexpectedDown,
+        bool extendedDowntime,
+        bool guestUnresponsive,
+        bool recovery)
+    {
+        UserId = userId;
+        VmName = vmName;
+        Enabled = enabled;
+        NotifyUnexpectedDown = unexpectedDown;
+        NotifyExtendedDowntime = extendedDowntime;
+        NotifyGuestUnresponsive = guestUnresponsive;
+        NotifyRecovery = recovery;
+    }
+
+    public long UserId { get; set; }
+    public string VmName { get; set; }
+    public bool Enabled { get; set; }
+    public bool NotifyUnexpectedDown { get; set; }
+    public bool NotifyExtendedDowntime { get; set; }
+    public bool NotifyGuestUnresponsive { get; set; }
+    public bool NotifyRecovery { get; set; }
+
+    public static VmAvailabilityPreference Default(long userId, string vmName) => new(userId, vmName, true, true, true, true, true);
+}
+
+public sealed record VmAvailabilityState(
+    string VmName,
+    string LastState,
+    bool LastHeartbeatHealthy,
+    bool WasObservedRunning,
+    bool DownWasPlanned,
+    DateTime LastSampleAt,
+    DateTime? DownSince,
+    DateTime? UnresponsiveSince,
+    DateTime? PlannedUntil,
+    string PlannedReason,
+    DateTime? UnexpectedNotifiedAt,
+    DateTime? ExtendedNotifiedAt,
+    DateTime? UnresponsiveNotifiedAt,
+    DateTime UpdatedAt)
+{
+    public bool IsDown => DownSince is not null;
+    public bool IsPlannedNow => PlannedUntil is not null && PlannedUntil > DateTime.UtcNow;
+}
+
+public sealed record VmAvailabilityEvent(
+    long Id,
+    string VmName,
+    string EventType,
+    string Severity,
+    string Title,
+    string Message,
+    DateTime StartedAt,
+    DateTime CreatedAt);
+
+public sealed record VmAvailabilityRecipient(
+    long UserId,
+    string Username,
+    string Email,
+    VmAvailabilityPreference Preference);
+
+public sealed record VmAvailabilityRuntimeStatus(
+    bool IsRunning,
+    DateTime? StartedAt,
+    DateTime? LastEvaluationAt,
+    string LastMessage,
+    int TrackedVmCount);
+
+public sealed class VmSelfHealingConfig
+{
+    public VmSelfHealingConfig(
+        bool enabled,
+        bool clientEmailEnabled,
+        bool notifyAdmins,
+        bool unexpectedStopRecovery,
+        bool heartbeatRecovery,
+        int unexpectedStopDelayMinutes,
+        int heartbeatDelayMinutes,
+        int confirmationMinutes,
+        int cooldownMinutes,
+        int maxAttempts,
+        int attemptWindowMinutes)
+    {
+        Enabled = enabled;
+        ClientEmailEnabled = clientEmailEnabled;
+        NotifyAdmins = notifyAdmins;
+        UnexpectedStopRecovery = unexpectedStopRecovery;
+        HeartbeatRecovery = heartbeatRecovery;
+        UnexpectedStopDelayMinutes = unexpectedStopDelayMinutes;
+        HeartbeatDelayMinutes = heartbeatDelayMinutes;
+        ConfirmationMinutes = confirmationMinutes;
+        CooldownMinutes = cooldownMinutes;
+        MaxAttempts = maxAttempts;
+        AttemptWindowMinutes = attemptWindowMinutes;
+    }
+
+    public bool Enabled { get; set; }
+    public bool ClientEmailEnabled { get; set; }
+    public bool NotifyAdmins { get; set; }
+    public bool UnexpectedStopRecovery { get; set; }
+    public bool HeartbeatRecovery { get; set; }
+    public int UnexpectedStopDelayMinutes { get; set; }
+    public int HeartbeatDelayMinutes { get; set; }
+    public int ConfirmationMinutes { get; set; }
+    public int CooldownMinutes { get; set; }
+    public int MaxAttempts { get; set; }
+    public int AttemptWindowMinutes { get; set; }
+
+    public static VmSelfHealingConfig Default => new(false, true, true, true, false, 3, 20, 3, 30, 2, 360);
+}
+
+public sealed class VmSelfHealingPreference
+{
+    public VmSelfHealingPreference(
+        string vmName,
+        bool enabled,
+        bool recoverUnexpectedStop,
+        bool recoverUnresponsive,
+        DateTime? holdUntil,
+        string holdReason,
+        DateTime updatedAt)
+    {
+        VmName = vmName;
+        Enabled = enabled;
+        RecoverUnexpectedStop = recoverUnexpectedStop;
+        RecoverUnresponsive = recoverUnresponsive;
+        HoldUntil = holdUntil;
+        HoldReason = holdReason;
+        UpdatedAt = updatedAt;
+    }
+
+    public string VmName { get; set; }
+    public bool Enabled { get; set; }
+    public bool RecoverUnexpectedStop { get; set; }
+    public bool RecoverUnresponsive { get; set; }
+    public DateTime? HoldUntil { get; set; }
+    public string HoldReason { get; set; }
+    public DateTime UpdatedAt { get; set; }
+
+    public bool IsHeld => HoldUntil is not null && HoldUntil > DateTime.UtcNow;
+    public static VmSelfHealingPreference Default(string vmName) => new(vmName, false, true, false, null, string.Empty, DateTime.UtcNow);
+}
+
+public sealed record VmSelfHealingState(
+    string VmName,
+    string IncidentKey,
+    string IncidentType,
+    DateTime? IncidentStartedAt,
+    int AttemptCount,
+    DateTime? WindowStartedAt,
+    DateTime? LastAttemptAt,
+    DateTime? NextAttemptAt,
+    string Status,
+    string LastResult,
+    DateTime UpdatedAt);
+
+public sealed record VmSelfHealingEvent(
+    long Id,
+    string VmName,
+    string IncidentType,
+    string EventType,
+    string Status,
+    int AttemptNumber,
+    string Message,
+    DateTime CreatedAt);
+
+public sealed record VmSelfHealingRuntimeStatus(
+    bool IsRunning,
+    DateTime? StartedAt,
+    DateTime? LastEvaluationAt,
+    string LastMessage,
+    int EligibleVmCount,
+    int ActiveIncidentCount);
 
 public sealed record PortMappingConflict(
     string VmName,
@@ -489,6 +1319,24 @@ public sealed record GuestAgentTokenResult(
 public sealed record EmergencyPasswordResetQueueResult(
     string Message,
     bool PasswordEmailSent);
+
+public sealed record VmRecoveryAccountSecret(
+    string VmName,
+    bool IsEnabled,
+    string Username,
+    string Password,
+    DateTime? LastRotatedAt,
+    DateTime? LastUsedAt,
+    string LastError,
+    DateTime UpdatedAt);
+
+public sealed record VmRecoveryAccountStatus(
+    string VmName,
+    bool IsReady,
+    string Username,
+    DateTime? LastRotatedAt,
+    DateTime? LastUsedAt,
+    string LastError);
 
 public sealed record GuestAgentPasswordResetPayload(
     string Username,
